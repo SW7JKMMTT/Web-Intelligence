@@ -1,10 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace lecture1
+namespace miniproject
 {
     class Program
     {
@@ -77,7 +80,7 @@ namespace lecture1
 
                 for (int i = 0; i < data.Length; i++)
                 {
-                    sBuilder.Append(data[i].ToString("x2"));
+                    sBuilder.Append(i.ToString("x2"));
                 }
 
                 return sBuilder.ToString();
@@ -135,24 +138,58 @@ namespace lecture1
 
         static void Main(string[] args)
         {
-            //TestString<string,    int>("do not worry about your difficulties in mathematics", "i would not worry about your dificulties, you can easily learn what is needed.", HashOne, 3);
+            //TestString<string, int>("do not worry about your difficulties in mathematics", "i would not worry about your difficulties, you can easily learn what is needed.", HashOne, 3);
             //TestString<string, string>("do not worry about your difficulties in mathematics", "i would not worry about your difficulties, you can easily learn what is needed.", HashTwo, 3);
             //TestString<string, string>("do not worry about your difficulties in mathematics", "i would not worry about your difficulties, you can easily learn what is needed.", HashThree, 3);
 
-            var sketchA = Sketch("do not worry about your difficulties in mathematics", 3);
-            var sketchB = Sketch("i would not worry about your dificulties, you can easily learn what is needed.", 3);
+            //var sketchA = Sketch("do not worry about your difficulties in mathematics", 3);
+            //var sketchB = Sketch("i would not worry about your dificulties, you can easily learn what is needed.", 3);
 
-            foreach (var s in sketchA)
+            //foreach (var s in sketchA)
+            //{
+            //    Console.WriteLine(s);
+            //}
+
+            //foreach (var s in sketchB)
+            //{
+            //    Console.WriteLine(s);
+            //}
+
+            // Console.WriteLine(CompareSketches(sketchA, sketchB));
+
+            var websiteUrls = new List<string>();
+            //websiteUrls.Add(@"https://en.wikipedia.org");
+            //websiteUrls.Add(@"https://www.satai.dk");
+            //websiteUrls.Add(@"https://www.google.dk");
+            //websiteUrls.Add(@"http://stackoverflow.com");
+            //websiteUrls.Add(@"https://news.ycombinator.com");
+            //websiteUrls.Add(@"https://twitter.com");
+            //websiteUrls.Add(@"http://www.mmo-champion.com");
+            //websiteUrls.Add(@"http://www.imdb.com");
+            //websiteUrls.Add(@"https://www.instagram.com");
+            //websiteUrls.Add(@"https://www.youtube.com");
+
+            var httpClientHandler = new HttpClientHandler()
             {
-                Console.WriteLine(s);
-            }
+                AllowAutoRedirect = true,
+                MaxAutomaticRedirections = 100,
+                CookieContainer = new CookieContainer()
+            };
 
-            foreach (var s in sketchB)
-            {
-                Console.WriteLine(s);
-            }
+            var httpClient = new HttpClient(httpClientHandler);
 
-            Console.WriteLine(CompareSketches(sketchA, sketchB));
+            httpClient.DefaultRequestHeaders.Add("user-agent", "Mozilla/5.0 SataiCrawler");
+
+            var hosts = websiteUrls.Select(websiteUrl => new Host(websiteUrl, httpClient)).ToList();
+
+            //Console.WriteLine(hosts.First(x => x.hosturl.Contains("google.dk")).robots.IsAllowed("/derp"));
+
+            var seedUrl = new List<string>() { "http://stackoverflow.com" };
+
+
+            var crawler = new Crawler(seedUrl, hosts, httpClient);
+
+            crawler.Run();
         }
     }
 }
