@@ -31,7 +31,6 @@ def crawl_url(url):
         pass
     return None
 
-
 def put_it_in(url, front_queue=front_queue):
     if r2d2.is_allowed(url):
         front_queue.put(url)
@@ -71,8 +70,10 @@ def stats():
         for bq in list(back_queues.values()):
             bq_size += bq.qsize()
         axarr[0].bar(range(3), [front_queue.qsize(), bq_size, len(get_hosts())])
-        host_list = [len(h.webpages) for h in get_hosts().values() if len(h.webpages) > 1 ]
-        axarr[1].bar(range(len(host_list)), host_list)
+        host_list = [h for h in get_hosts().values() if len(h.webpages) > 1 ]
+        axarr[1].bar(range(len(host_list)), [len(h.webpages) for h in host_list])
+        axarr[1].xticks([h.host for h in host_list], range(len(host_list)))
+
         plt.pause(0.1)
 
 def init_seed_data():
@@ -86,12 +87,15 @@ if __name__ == '__main__':
 
     front_threads = []
     back_threads = []
-    for i in range(5):
-        threading.Thread(target=front_to_back).start()
-        threading.Thread(target=back_to_front).start()
+    for i in range(1):
+        f_t = threading.Thread(target=front_to_back)
+        b_t = threading.Thread(target=back_to_front)
+        front_threads.append(f_t)
+        back_threads.append(b_t)
+        f_t.start()
+        b_t.start()
 
     stats()
         # for host, data in get_hosts().items():
         #     if len(data.webpages):
         #         print('Host:', host,'[', len(data.webpages),']')
-
