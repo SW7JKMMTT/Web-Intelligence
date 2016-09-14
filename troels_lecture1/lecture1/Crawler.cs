@@ -9,12 +9,14 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
+using lecture1;
 
 namespace miniproject
 {
     public class Crawler
     {
-        public Queue<string> Queue = new Queue<string>();
+        //public Queue<string> Queue = new Queue<string>();
+        public BackQueue BackQueue;
 
         public HttpClientHandler httpClientHandler;
 
@@ -107,9 +109,9 @@ namespace miniproject
 
                     var candidateUri = new Uri(candiate);
 
-                    if(SitesVisited.Any(x => x.Equals(candiate)))
+                    if (SitesVisited.Any(x => x.Equals(candiate)))
                         continue;
-                        
+
                     var chost = Hosts.FirstOrDefault(x => candidateUri.Host.Contains(new Uri(x.hosturl).Host));
                     if (chost == null)
                     {

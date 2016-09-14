@@ -42,7 +42,7 @@ namespace miniproject
             var index = abs.IndexOf(host);
             if (index == -1)
                 return IsAllowed(abs);
-            
+
             var url = abs.Substring(index);
             return IsAllowed(url);
         }
@@ -52,9 +52,9 @@ namespace miniproject
             rawRobotstxt = "";
         }
 
-        public Robots(string robots_txt)
+        public Robots(string robotsTxt)
         {
-            rawRobotstxt = robots_txt;
+            rawRobotstxt = robotsTxt;
 
             var removedComments = new StringBuilder();
 

@@ -54,6 +54,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="BackQueue.cs" />
     <Compile Include="Crawler.cs" />
     <Compile Include="Host.cs" />
     <Compile Include="Link.cs" />

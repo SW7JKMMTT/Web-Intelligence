@@ -184,7 +184,7 @@ namespace miniproject
 
             //Console.WriteLine(hosts.First(x => x.hosturl.Contains("google.dk")).robots.IsAllowed("/derp"));
 
-            var seedUrl = new List<string>() { "http://stackoverflow.com" };
+            var seedUrl = new List<string>() { "http://www.mmo-champion.com" };
 
 
             var crawler = new Crawler(seedUrl, hosts, httpClient);

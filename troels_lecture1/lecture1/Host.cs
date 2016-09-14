@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace miniproject
 {
-    public class Host
+    public class Host : IComparable<Host>
     {
         public string hosturl;
 
@@ -36,5 +36,9 @@ namespace miniproject
             lastVisited = DateTime.Now;
         }
 
+        public int CompareTo(Host other)
+        {
+            return this.lastVisited.CompareTo(other);
+        }
     }
 }
