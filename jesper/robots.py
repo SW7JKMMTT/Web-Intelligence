@@ -101,7 +101,7 @@ class RobotTree():
 
     def addPath(self, path, state):
         curNode = self.root
-        for part in getParts(path):
+        for part in _getParts(path):
             newNode = curNode.find(part)
             if newNode == None:
                 if part == "*" or part == "": #path part is a complete wildcard
@@ -116,7 +116,7 @@ class RobotTree():
         curNode.final = True
 
     def matches(self, path):
-        pp = getParts(path)
+        pp = _getParts(path)
         instance = [[]]
         newInst = []
         run = 0
@@ -142,7 +142,7 @@ class RobotTree():
         return maxPerm
 
 
-def getParts(s):
+def _getParts(s):
     head, tail = os.path.split(s)
     parts = []
     while tail != "" or head != "/" and head != "":
@@ -154,7 +154,7 @@ def getParts(s):
 def isMe(agent):
     if agent == "*":
         return True
-    if agent == "Twitterbot":
+    if agent == "DelusionalBot":
         return True
     return False
 
