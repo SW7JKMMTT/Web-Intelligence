@@ -2,41 +2,53 @@
 import concurrent.futures
 import requests
 from url_normalize import url_normalize
-from datetime import datetime
+from datetime import datetime, timedelta
+import queue
+import heapq
+import pprint
 
-class HostRecord():
-    def __init__(self):
+class Url(object):
+    def __init__(self, url):
+        self.url = url
+
+    def str(self):
+        return self.url
+
+    def normalize(self):
+        return url_normalize(self.url)
+
+    def getHost(self):
+        protocol, url = self.url.split("//", 1)
+        host, path = url.split("/", 1)
+        if host.startswith("www."):
+            host = host[4:]
+        return host
+
+    def __str__(self):
+        return "< URL: {} >".format(self.url)
+
+class Host():
+    def __init__(self, host):
+        self.host = host
         self.urls = {}
-        self.open = []
-        self.nextOpen = datetime.now
+        self.open = queue.Queue()
+        self.nextOpen = datetime.now()
         self.isQueued = False
 
-    def addWork(self, url):
-        self.open.append(url)
+    def putWork(self, url):
+        self.open.put(url)
 
-    def popWork(self):
-        return self.open.pop()
+    def getWork(self):
+        return self.open.get_nowait()
 
-    def hasWork(self):
-        return not self.open;
+    def empty(self):
+        return self.open.empty();
 
-BackQueues = {}
+    def __lt__(self, other):
+        return self.nextOpen < other.nextOpen
 
-def normalizeUrl(url):
-    return url_normalize(url)
-
-def urlToHost(url):
-    protocol, url = url.split("//", 1)
-    host, path = url.split("/", 1)
-    if host.startswith("www."):
-        host = host[4:]
-    return host
-
-SEEDURLS = ['http://www.foxnews.com/',
-        'http://www.cnn.com/',
-        'http://europe.wsj.com/',
-        'http://www.bbc.co.uk/',
-        'http://some-made-up-domain.com/']
+    def __str__(self):
+        return "< HOST: {}, ITEMS: {} >".format(self.host, self.open.qsize())
 
 # Retrieve a single page and report the URL and contents
 def load_url(url, host, timeout):
@@ -44,35 +56,96 @@ def load_url(url, host, timeout):
     host.isQueued = False
     return r.content
 
-# We can use a with statement to ensure threads are cleaned up promptly
-with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-    # Start the load operations and mark each future with its URL
-    for url in SEEDURLS:
-        host = urlToHost(url)
-        hostRec = HostRecord()
-        hostRec.addWork(normalizeUrl(url))
-        BackQueues[host] = hostRec
+class FrontQueue(object):
+    def __init__(self):
+        self.q = queue.Queue()
 
-    while True:
-        for host, bq in BackQueues.items():
-            if bq.isQueued or not bq.hasWork():
-                continue
-            bq.isQueued = True
+    def get(self):
+        return self.q.get()
 
-            work =  bq.popWork()
-            future = executor.submit(load_url, work, bq, 60)
-            try:
-                data = future.result()
-            except Exception as exc:
-                print('%r generated an exception: %s' % (url, exc))
-            else:
-                print('%r page is %d bytes' % (url, len(data)))
-    future_to_url = {executor.submit(load_url, url, 60): url for url in SEEDURLS}
-    for future in concurrent.futures.as_completed(future_to_url):
-        url = future_to_url[future]
-        try:
-            data = future.result()
-        except Exception as exc:
-            print('%r generated an exception: %s' % (url, exc))
-        else:
-            print('%r page is %d bytes' % (url, len(data)))
+    def put(self, url):
+        return self.q.put(url)
+
+    def empty(self):
+        return self.q.empty()
+
+class BackQueue(object):
+    def __init__(self, fq):
+        self.bqs = {}
+        self.bqh = queue.PriorityQueue()
+        self.fq = fq
+
+    def getHostQueue(self, host):
+        return self.bqs[host]
+
+    def _putHeap(self, bq):
+        print("Putting {} on the heap".format(bq))
+        self.bqh.put(bq)
+        bq.isQueued = True
+
+    def _getHeap(self):
+        bq = self.bqh.get()
+        if(bq.nextOpen > datetime.now()):
+            self.bqh.put(bq)
+            return None
+        bq.isQueued = False
+        return bq
+
+    def _fillbq(self):
+        while not self.fq.empty():
+            w = self.fq.get()
+            host = w.getHost()
+            if not host in self.bqs:
+                self.bqs[host] = Host(host)
+            q = self.getHostQueue(w.getHost())
+            q.putWork(w)
+            if not q.isQueued:
+                self._putHeap(q)
+
+    def getNext(self):
+        if self.bqh.empty():
+            self._fillbq()
+
+        q = self._getHeap()
+        if q == None:
+            return None, None
+        work = q.getWork()
+
+        if q.empty():
+            self._fillbq()
+        return work, q
+
+    def done(self, host):
+        if host.empty():
+            return
+        host.nextOpen = datetime.now() + timedelta(seconds=3)
+        self._putHeap(host)
+
+SEEDURLS = ['http://www.foxnews.com/',
+        'http://www.cnn.com/',
+        'http://europe.wsj.com/',
+        'http://europe.wsj.com/',
+        'http://europe.wsj.com/',
+        'http://europe.wsj.com/',
+        'http://www.bbc.co.uk/',
+        'http://some-made-up-domain.com/']
+
+fq = FrontQueue()
+
+for url in SEEDURLS:
+    u = Url(url)
+    print("Adding seed {}".format(u))
+    fq.put(u)
+    # host = urlToHost(url)
+    # hostRec = BackQueue(host)
+    # hostRec.addWork(normalizeUrl(url))
+    # BackQueues[host] = hostRec
+
+
+sel = BackQueue(fq)
+while True:
+    w, h = sel.getNext()
+    if w == None:
+        continue
+    print(w)
+    sel.done(h)
