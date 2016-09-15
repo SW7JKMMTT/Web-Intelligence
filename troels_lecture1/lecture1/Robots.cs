@@ -35,7 +35,7 @@ namespace miniproject
             return true;
         }
 
-        public bool IsAllowed(Uri uri)
+        public bool IsAllowed(System.Uri uri)
         {
             var host = uri.Host;
             var abs = uri.AbsolutePath;

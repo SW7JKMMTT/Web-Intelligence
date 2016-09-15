@@ -1,10 +1,11 @@
 ﻿using System;
+using lecture1;
 
 namespace miniproject
 {
     public class Site
     {
-        public string url;
+        public Uri url;
 
         public string content;
 
@@ -12,7 +13,7 @@ namespace miniproject
 
         public Host host;
 
-        public Site(string url, string content, Host host)
+        public Site(Uri url, string content, Host host)
         {
             this.url = url;
             this.content = content;

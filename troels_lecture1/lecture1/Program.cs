@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
+using lecture1;
 
 namespace miniproject
 {
@@ -157,7 +158,7 @@ namespace miniproject
 
             // Console.WriteLine(CompareSketches(sketchA, sketchB));
 
-            var websiteUrls = new List<string>();
+            var websiteUrls = new List<Uri>();
             //websiteUrls.Add(@"https://en.wikipedia.org");
             //websiteUrls.Add(@"https://www.satai.dk");
             //websiteUrls.Add(@"https://www.google.dk");
@@ -176,18 +177,15 @@ namespace miniproject
                 CookieContainer = new CookieContainer()
             };
 
-            var httpClient = new HttpClient(httpClientHandler);
-
+            var httpClient = new HttpClient(httpClientHandler) { Timeout = new TimeSpan(0, 0, 5) };
             httpClient.DefaultRequestHeaders.Add("user-agent", "Mozilla/5.0 SataiCrawler");
 
-            var hosts = websiteUrls.Select(websiteUrl => new Host(websiteUrl, httpClient)).ToList();
+            //var hosts = websiteUrls.Select(websiteUrl => new Host(websiteUrl, httpClient)).ToList();
 
             //Console.WriteLine(hosts.First(x => x.hosturl.Contains("google.dk")).robots.IsAllowed("/derp"));
 
-            var seedUrl = new List<string>() { "http://www.mmo-champion.com" };
-
-
-            var crawler = new Crawler(seedUrl, hosts, httpClient);
+            var seedUrl = new List<Uri>() { new Uri("http://dr.dk") };
+            var crawler = new Crawler(seedUrl, new List<Host>(), httpClient);
 
             crawler.Run();
         }

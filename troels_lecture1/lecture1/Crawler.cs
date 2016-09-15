@@ -1,17 +1,13 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
-using System.Net;
 using System.Net.Http;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Web;
-using lecture1;
+using miniproject;
 
-namespace miniproject
+namespace lecture1
 {
     public class Crawler
     {
@@ -22,41 +18,39 @@ namespace miniproject
 
         public HttpClient httpClient;
 
-        public List<Host> Hosts;
+        public List<Host> hosts;
 
         public List<Site> SitesVisited = new List<Site>();
 
-        public Crawler(IEnumerable<string> url, IEnumerable<Host> hosts, HttpClient httpClient)
+        public Crawler(IEnumerable<Uri> url, IEnumerable<Host> hosts, HttpClient httpClient)
         {
-            foreach (var u in url)
-            {
-                Queue.Enqueue(u);
-            }
-
-            this.Hosts = hosts.ToList();
+            this.hosts = hosts.ToList();
 
             this.httpClient = httpClient;
+
+            BackQueue = new BackQueue();
+
+            foreach (var u in url)
+            {
+                //var host = new Host(u, httpClient);
+                var host = Host.GetOrCreate(u, this.hosts);
+                BackQueue.AddToQueue(host, u);
+            }
         }
 
         public bool Run()
         {
             var timeoutms = 1000;
-
-            while (Queue.Count > 0)
+            Stopwatch sw = Stopwatch.StartNew();
+            while (BackQueue.GetBackQueueCount() > 0)
             {
-                String url = Queue.Dequeue();
-                Uri uri = new Uri(url);
-                var hosturl = uri.Host;
-                Host currentHost = Hosts.FirstOrDefault(x => x.hosturl.Contains(hosturl));
-                if (currentHost == null)
-                {
-                    currentHost = new Host(url.Substring(0, url.IndexOf(uri.Host)) + hosturl, httpClient);
-                    Hosts.Add(currentHost);
-                }
+
+                Uri uri = BackQueue.GetSite();
+                var currentHost = Host.GetOrCreate(uri, hosts);
 
                 if (!currentHost.robots.IsAllowed(uri))
                 {
-                    Console.WriteLine("Url (\"{1}\") not allowed on this host (\"{0}\")", uri, url);
+                    Console.WriteLine("Url (\"{0}\") not allowed on this host (\"{1}\")", uri, uri.Host);
                     continue;
                 }
 
@@ -66,73 +60,94 @@ namespace miniproject
                     Thread.Sleep(currentHost.lastVisited.AddMilliseconds(timeoutms) - DateTime.Now);
                 }
 
-
-                var content = httpClient.GetStringAsync(uri);
+                currentHost.WaitForRobots(httpClient);
+                Task<string> content = null;
                 try
                 {
+                    content = httpClient.GetStringAsync(uri);
                     content.Wait();
                 }
-                catch (System.AggregateException ex)
+                catch (System.AggregateException)
                 {
-                    Console.WriteLine("Failed to get: {0}", url);
+                    Console.WriteLine("Failed to get: {0}", uri);
+                    currentHost.lastVisited = DateTime.Now;
                 }
 
-                if (content.Status == TaskStatus.Faulted)
+                if (content == null || content.Status != TaskStatus.RanToCompletion)
                     continue;
 
-                var site = new Site(url, content.Result, currentHost);
+                var site = new Site(uri, content.Result, currentHost);
                 Console.WriteLine("Visited site: {0}", site.url);
                 SitesVisited.Add(site);
 
-                var doc = new HtmlAgilityPack.HtmlDocument();
-                doc.LoadHtml(site.content);
+                IEnumerable<string> urls = null;
+                try
+                {
+                    var doc = new HtmlAgilityPack.HtmlDocument();
+                    doc.LoadHtml(site.content);
+
+                    urls =
+                        doc.DocumentNode.SelectNodes("//a")
+                            .Where(x => x.Attributes["href"] != null)
+                            .Select(x => x.Attributes["href"].Value);
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex.Message);
+                }
 
                 int allowed = 0;
                 int notAllowed = 0;
                 int duplicates = 0;
 
-                foreach (var s in doc.DocumentNode.SelectNodes("//a").Where(x => x.Attributes["href"] != null).Select(x => x.Attributes["href"].Value))
+                if(urls == null)
+                    continue;
+
+                foreach (var s in urls)
                 {
                     string candiate = "";
 
-                    if (s.StartsWith("http"))
+                    if (s.StartsWith("http://") || s.StartsWith("https://"))
                         candiate = s;
 
                     if (s.StartsWith("//"))
-                        candiate = url.Substring(0, url.IndexOf("//")) + s;
+                        candiate = uri.Scheme + ":" + s;
 
                     if (s.StartsWith("/") && !s.StartsWith("//"))
-                        candiate = url.Substring(0, url.IndexOf("//")) + "//" + hosturl + s;
+                        candiate = uri.Scheme + "://" + currentHost.hosturl.Host + s;
 
                     if (candiate == "")
                         continue;
 
-                    var candidateUri = new Uri(candiate);
+                    Uri candidateUri = null;
+                    try
+                    {
+                        candidateUri = new Uri(candiate);
+                    }
+                    catch (Exception exception)
+                    {
+                        Console.WriteLine("Candidate failed: " + candiate + "\n" +exception.Message);
+                        continue;
+                    }
+                    
 
-                    if (SitesVisited.Any(x => x.Equals(candiate)))
+                    if (SitesVisited.Any(x => x.url.Equals(candidateUri)))
                         continue;
 
-                    var chost = Hosts.FirstOrDefault(x => candidateUri.Host.Contains(new Uri(x.hosturl).Host));
-                    if (chost == null)
-                    {
-                        chost = new Host(candiate.Substring(0, candiate.IndexOf("//")) + "//" + candidateUri.Host, httpClient);
-                        Hosts.Add(chost);
-                    }
+                    var chost = Host.GetOrCreate(candidateUri, hosts);
+
 
                     if (chost.robots.IsAllowed(candiate))
                     {
-                        //Console.WriteLine("Added a link: \"{0}\"", candiate);
-                        if (!candiate.Trim().Equals("") && !SitesVisited.Any(x => x.url.Equals(x.content)))
+                        if (!candiate.Trim().Equals("") && !SitesVisited.Any(x => x.url.Equals(candidateUri)))
                         {
-                            Queue.Enqueue(candiate);
+                            BackQueue.AddToQueue(chost, candidateUri);
                             allowed++;
                         }
                         else
                         {
                             duplicates++;
                         }
-
-
                     }
                     else
                     {
@@ -140,8 +155,8 @@ namespace miniproject
                         //Console.WriteLine("Obmitted a link: \"{0}\"", candiate);
                     }
                 }
-
-                Console.WriteLine("Visited {0} sites, {1} to-go, added {2} to queue, and {3} was not allowed. ({4} duplicates)", SitesVisited.Count, Queue.Count, allowed, notAllowed, duplicates);
+                Console.WriteLine("{0} sites / {1} seconds = {2} sites pr. second", SitesVisited.Count, sw.Elapsed.Seconds, (double)(SitesVisited.Count / sw.Elapsed.TotalSeconds));
+                Console.WriteLine("Visited {0} sites, {1} to-go, added {2} to queue, and {3} was not allowed. ({4} duplicates)\n", SitesVisited.Count, BackQueue.GetBackQueueCount(), allowed, notAllowed, duplicates);
             }
 
             return true;
