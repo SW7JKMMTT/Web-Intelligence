@@ -1,35 +1,47 @@
 #!/bin/env python
 import concurrent.futures
 import requests
+import bs4
+import robots
 from url_normalize import url_normalize
 from datetime import datetime, timedelta
+import urllib.parse
 import queue
 import heapq
 import pprint
 
 class Url(object):
     def __init__(self, url):
-        self.url = url
+        self.url = urllib.parse.urlparse(url)
 
     def str(self):
         return self.url
 
     def normalize(self):
-        return url_normalize(self.url)
+        url_normalize(self.url.geturl())
+
+    def geturl(self):
+        return self.url.geturl()
 
     def getHost(self):
-        protocol, url = self.url.split("//", 1)
-        host, path = url.split("/", 1)
-        if host.startswith("www."):
-            host = host[4:]
-        return host
+        return self.url.netloc
+
+    def getPath(self):
+        return self.url.path
+
+    def join(self, pa):
+        return Url(urllib.parse.urljoin(self.url.geturl(), pa))
+
+    def getProtocol(self):
+        return self.url.scheme
 
     def __str__(self):
-        return "< URL: {} >".format(self.url)
+        return "< URL: {} >".format(self.url.geturl())
 
 class Host():
     def __init__(self, host):
         self.host = host
+        self.robots = None
         self.urls = {}
         self.open = queue.Queue()
         self.nextOpen = datetime.now()
@@ -41,20 +53,28 @@ class Host():
     def getWork(self):
         return self.open.get_nowait()
 
-    def empty(self):
-        return self.open.empty();
+    def hasWork(self):
+        return not self.open.empty();
+
+    def getRobots(self, url):
+        if self.robots == None:
+            try:
+                r = requests.get(url.join("robots.txt").geturl())
+            except (requests.ConnectionError, requests.TooManyRedirects):
+                return None
+            self.robots = robots.compileRobots(r.text)
+        return self.robots
 
     def __lt__(self, other):
         return self.nextOpen < other.nextOpen
 
+    def __eq__(self, other):
+        if not self is other:
+            return False
+        return self.nextOpen == other.nextOpen
+
     def __str__(self):
         return "< HOST: {}, ITEMS: {} >".format(self.host, self.open.qsize())
-
-# Retrieve a single page and report the URL and contents
-def load_url(url, host, timeout):
-    r = requests.get(url, timeout=timeout)
-    host.isQueued = False
-    return r.content
 
 class FrontQueue(object):
     def __init__(self):
@@ -92,6 +112,7 @@ class BackQueue(object):
         return bq
 
     def _fillbq(self):
+        print("Filling Queue")
         while not self.fq.empty():
             w = self.fq.get()
             host = w.getHost()
@@ -111,24 +132,59 @@ class BackQueue(object):
             return None, None
         work = q.getWork()
 
-        if q.empty():
+        print("The queue is {}".format(self.bqh.qsize()))
+        if not q.hasWork():
             self._fillbq()
+
         return work, q
 
     def done(self, host):
-        if host.empty():
-            return
         host.nextOpen = datetime.now() + timedelta(seconds=3)
-        self._putHeap(host)
+        if host.hasWork():
+            self._putHeap(host)
+        return
 
-SEEDURLS = ['http://www.foxnews.com/',
-        'http://www.cnn.com/',
-        'http://europe.wsj.com/',
-        'http://europe.wsj.com/',
-        'http://europe.wsj.com/',
-        'http://europe.wsj.com/',
-        'http://www.bbc.co.uk/',
-        'http://some-made-up-domain.com/']
+# Retrieve a single page and report the URL and contents
+def load_url(fq, url, host, timeout):
+    robloc = url.join("/robots.txt")
+    rob = host.getRobots(url)
+    if rob != None and rob.getPermission(url.getPath()) == robots.Permission.disallow:
+        return
+    print("Downloading {}".format(url.geturl()))
+    try:
+        h = requests.head(url.geturl(), timeout=timeout)
+        print(h.headers["content-length"])
+        r = requests.get(url.geturl(), timeout=timeout)
+    except (requests.ReadTimeout, requests.ConnectionError, requests.TooManyRedirects):
+        print("Read timed out")
+        return
+    print("Downloaded")
+    bs = bs4.BeautifulSoup(r.content, "html.parser")
+    for link in bs.find_all("a"):
+        if not "href" in link.attrs:
+            continue
+        loc = link.attrs["href"].strip(" ")
+        if loc == "":
+            continue
+        elif loc.startswith("mailto:"): #Fucking mail links
+            continue
+        elif loc[0] == "#": #It goes to some header
+            continue
+        elif loc.startswith("javascript"): #Kill me now
+            continue
+        else:
+            newU = w.join(loc)
+        if not newU.getProtocol().startswith("http"):
+            return
+        if not newU.getProtocol().startswith("http"):
+            print("What is this?: {}".format(newU.geturl()))
+        fq.put(newU)
+
+SEEDURLS = [
+        'http://dr.dk',
+        'http://news.ycombinator.com',
+        'http://informations-venner.dk',
+    ]
 
 fq = FrontQueue()
 
@@ -141,11 +197,10 @@ for url in SEEDURLS:
     # hostRec.addWork(normalizeUrl(url))
     # BackQueues[host] = hostRec
 
-
 sel = BackQueue(fq)
 while True:
     w, h = sel.getNext()
     if w == None:
         continue
-    print(w)
+    load_url(fq, w, h, 2)
     sel.done(h)
