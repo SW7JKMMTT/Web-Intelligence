@@ -11,7 +11,45 @@ import urllib.parse
 import queue
 import heapq
 import pprint
-from numba import jit
+from singledispatch import singledispatch
+
+class CantStoreTypeError(Exception):
+    def __init__(self, t):
+        self.t = t
+
+    def __str__(self):
+        return str(self.t)
+
+@singledispatch
+def save(obj):
+    raise CantStoreTypeError(type(obj))
+
+@save.register(dict)
+def save_dict(obj):
+    this = {}
+    for k, v in obj.items():
+        this[k] = save(v)
+    return this
+
+@save.register(str)
+def save_str(obj):
+    return obj
+
+@save.register(datetime)
+def save_datetime(obj):
+    return str(obj.timestamp())
+
+#This is really expensive
+@save.register(queue.Queue)
+def save_datetime(obj):
+    q = []
+    while not obj.empty():
+        i = obj.get_nowait()
+        q.append(i)
+    for k, i in enumerate(q):
+        obj.put_nowait(i)
+        q[k] = save(i)
+    return q
 
 class Url(object):
     def __init__(self, url):
@@ -40,6 +78,11 @@ class Url(object):
 
     def __str__(self):
         return "< URL: {} >".format(self.url.geturl())
+
+@save.register(Url)
+def save_url(obj):
+    return obj.geturl()
+
 
 class Host():
     def __init__(self, host):
@@ -85,6 +128,15 @@ class Host():
 
     def __str__(self):
         return "< HOST: {}, ITEMS: {} >".format(self.host, self.open.qsize())
+
+@save.register(Host)
+def save_host(obj):
+    this = {}
+    this["host"] = save(obj.host)
+    this["urls"] = save(obj.urls)
+    this["open"] = save(obj.open)
+    this["nextOpen"] = save(obj.nextOpen)
+    return this
 
 class WebPage(object):
     def __init__(self, url):
@@ -305,12 +357,13 @@ def run():
         w, h = sel.getNext()
         if w == None:
             continue
+        pprint.pprint(save(h))
         page = load_url(fq, w, h, 2)
         if page != None:
             h.putVisited(page)
         sel.done(h)
 
-for i in range(100):
+for i in range(1):
     t = threading.Thread(target=run)
     print("Starting {}".format(i))
     time.sleep(2)
