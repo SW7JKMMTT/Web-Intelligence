@@ -88,11 +88,15 @@ class GlobNode(Node):
 
 
 class Robots():
-    def __init__(self, tree):
+    def __init__(self, tree, delay):
         self.tree = tree
+        self.delay = delay
 
     def getPermission(self, path):
         return self.tree.matches(path)
+
+    def isAllowed(self, path):
+        return self.tree.matches(path) == Permission.allow
 
 class RobotTree():
     def __init__(self, default):
@@ -162,6 +166,7 @@ def compileRobots(s):
     tree = RobotTree(Permission.allow)
     doParse = False
     hasRules = True
+    delay = -1
     for line in s.split("\n"):
         line = re.sub(r'#.*', "", line)
         line = line.strip(" ")
@@ -178,6 +183,10 @@ def compileRobots(s):
             hasRules = True
             if doParse:
                 tree.addPath(s[1].strip(" "), Permission.disallow)
+        elif s[0].lower() == "crawl-delay":
+            hasRules = True
+            if doParse:
+                delay = float(s[1].strip(" "))
         elif s[0].lower() == "user-agent":
             if isMe(s[1].strip(" ")):
                 doParse = True
@@ -185,7 +194,7 @@ def compileRobots(s):
             elif  hasRules == True:
                 doParse = False
                 hasRules = False
-    return Robots(tree)
+    return Robots(tree, delay)
 
 def main():
     rob = """
