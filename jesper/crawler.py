@@ -1,5 +1,7 @@
 #!/bin/env python
 import concurrent.futures
+import threading
+import time
 import requests
 import bs4
 import robots
@@ -9,6 +11,7 @@ import urllib.parse
 import queue
 import heapq
 import pprint
+from numba import jit
 
 class Url(object):
     def __init__(self, url):
@@ -56,11 +59,18 @@ class Host():
     def hasWork(self):
         return not self.open.empty();
 
+    def putVisited(self, page):
+        self.urls[page.getPath()] = page
+
+    def isVisited(self, url):
+        return url.getPath() in self.urls
+
     def getRobots(self, url):
         if self.robots == None:
             try:
-                r = requests.get(url.join("robots.txt").geturl())
-            except (requests.ConnectionError, requests.TooManyRedirects):
+                print("Getting robots file {}".format(url.join("/robots.txt").geturl()))
+                r = requests.get(url.join("/robots.txt").geturl(), allow_redirects=False, timeout=2)
+            except (requests.ConnectionError, requests.TooManyRedirects, requests.ReadTimeout):
                 return None
             self.robots = robots.compileRobots(r.text)
         return self.robots
@@ -76,6 +86,52 @@ class Host():
     def __str__(self):
         return "< HOST: {}, ITEMS: {} >".format(self.host, self.open.qsize())
 
+class WebPage(object):
+    def __init__(self, url):
+        self.url = url
+        self.visit = datetime.now()
+
+    def getPath(self):
+        return self.url.getPath()
+
+    def getLinks(self):
+        raise NotImplementedError()
+
+    def getSize(self):
+        raise NotImplementedError()
+
+class LargePage(WebPage):
+    def __init__(self, url, size = 0):
+        WebPage.__init__(self, url)
+        self.size = size
+
+    def getSize(self):
+        return self.size
+
+class UnparsablePage(WebPage):
+    def __init__(self, url):
+        WebPage.__init__(self, url)
+
+class HTMLPage(WebPage):
+    def __init__(self, url, content, size, links):
+        WebPage.__init__(self, url)
+        self.content = content
+        self.size = size
+        self.linksTo = links
+        self.visited = True
+
+    def isCrawled(self):
+        return self.visited
+
+    def setCrawled(self):
+        self.visited = True
+
+    def getLinks(self):
+        return self.linksTo
+
+    def getSize(self):
+        return self.size
+
 class FrontQueue(object):
     def __init__(self):
         self.q = queue.Queue()
@@ -89,6 +145,7 @@ class FrontQueue(object):
     def empty(self):
         return self.q.empty()
 
+lock = threading.Lock()
 class BackQueue(object):
     def __init__(self, fq):
         self.bqs = {}
@@ -124,18 +181,22 @@ class BackQueue(object):
                 self._putHeap(q)
 
     def getNext(self):
+        lock.acquire()
         if self.bqh.empty():
             self._fillbq()
 
         q = self._getHeap()
         if q == None:
+            lock.release()
+            return None, None
+        if not q.hasWork():
+            lock.release()
             return None, None
         work = q.getWork()
 
-        print("The queue is {}".format(self.bqh.qsize()))
         if not q.hasWork():
             self._fillbq()
-
+        lock.release()
         return work, q
 
     def done(self, host):
@@ -144,22 +205,49 @@ class BackQueue(object):
             self._putHeap(host)
         return
 
-# Retrieve a single page and report the URL and contents
-def load_url(fq, url, host, timeout):
-    robloc = url.join("/robots.txt")
-    rob = host.getRobots(url)
-    if rob != None and rob.getPermission(url.getPath()) == robots.Permission.disallow:
-        return
-    print("Downloading {}".format(url.geturl()))
+class PageTooLargeError(Exception):
+    def __init__(self, size = 0):
+        self.size = size
+
+class WrongTypeError(Exception):
+    pass
+
+MAX_PAGE_SIZE=20971520
+def downloadPage(url, maxSize, allowedTypes, timeout):
+    with requests.Session() as s:
+        r = s.get(url.geturl(), timeout=timeout, stream=True)
+        if "content-length" in r.headers and int(r.headers["content-length"]) >= maxSize:
+            print("Headers reported the content to be {} bytes long".format(r.headers["content-length"]))
+            raise PageTooLargeError(int(r.headers["content-length"]))
+
+        if "content-type" in r.headers and r.headers["content-type"] in allowedTypes:
+            for t in allowedTypes:
+                if r.headers["content-type"] == t or r.headers["content-type"].find(t):
+                    break
+            else:
+                print("Headers reported the content to be of type {}".format(r.headers["content-type"]))
+                raise WrongTypeError()
+
+        pageSize = 0
+        data = bytes()
+        for chunk in r.iter_content(chunk_size=8192, decode_unicode=False):
+            pageSize += len(chunk)
+            data += chunk
+            if pageSize > maxSize:
+                print("Page was too long to be indexed")
+                raise PageTooLargeError()
+        return data, pageSize
+
+def getPage(url, timeout):
     try:
-        h = requests.head(url.geturl(), timeout=timeout)
-        print(h.headers["content-length"])
-        r = requests.get(url.geturl(), timeout=timeout)
-    except (requests.ReadTimeout, requests.ConnectionError, requests.TooManyRedirects):
-        print("Read timed out")
-        return
-    print("Downloaded")
-    bs = bs4.BeautifulSoup(r.content, "html.parser")
+        data, pageSize = downloadPage(url, MAX_PAGE_SIZE, ["text/html"], timeout)
+    except PageTooLargeError as e:
+        return LargePage(url, e.size)
+    except WrongTypeError as e:
+        return UnparsablePage(url)
+
+    bs = bs4.BeautifulSoup(data, "html.parser")
+    links = []
     for link in bs.find_all("a"):
         if not "href" in link.attrs:
             continue
@@ -170,20 +258,37 @@ def load_url(fq, url, host, timeout):
             continue
         elif loc[0] == "#": #It goes to some header
             continue
-        elif loc.startswith("javascript"): #Kill me now
+        elif loc.startswith("javascript:"): #Kill me now
             continue
         else:
-            newU = w.join(loc)
+            newU = url.join(loc)
         if not newU.getProtocol().startswith("http"):
-            return
+            continue
         if not newU.getProtocol().startswith("http"):
             print("What is this?: {}".format(newU.geturl()))
-        fq.put(newU)
+        links.append(newU)
+    return HTMLPage(url, data, len(data), links)
+
+# Retrieve a single page and report the URL and contents
+def load_url(fq, url, host, timeout):
+    if host.isVisited(url):
+        print("Already visited")
+        return None
+    rob = host.getRobots(url)
+    if rob != None and not rob.isAllowed(url.getPath()):
+        return
+    print("Downloading {}".format(url.geturl()))
+    try:
+        page = getPage(url, timeout)
+        for l in page.getLinks():
+            fq.put(l)
+        return page
+    except (requests.ReadTimeout, requests.ConnectionError, requests.TooManyRedirects):
+        print("Read timed out")
+        return WebPage(url)
 
 SEEDURLS = [
         'http://dr.dk',
-        'http://news.ycombinator.com',
-        'http://informations-venner.dk',
     ]
 
 fq = FrontQueue()
@@ -192,15 +297,21 @@ for url in SEEDURLS:
     u = Url(url)
     print("Adding seed {}".format(u))
     fq.put(u)
-    # host = urlToHost(url)
-    # hostRec = BackQueue(host)
-    # hostRec.addWork(normalizeUrl(url))
-    # BackQueues[host] = hostRec
 
 sel = BackQueue(fq)
-while True:
-    w, h = sel.getNext()
-    if w == None:
-        continue
-    load_url(fq, w, h, 2)
-    sel.done(h)
+
+def run():
+    while True:
+        w, h = sel.getNext()
+        if w == None:
+            continue
+        page = load_url(fq, w, h, 2)
+        if page != None:
+            h.putVisited(page)
+        sel.done(h)
+
+for i in range(100):
+    t = threading.Thread(target=run)
+    print("Starting {}".format(i))
+    time.sleep(2)
+    t.start()
