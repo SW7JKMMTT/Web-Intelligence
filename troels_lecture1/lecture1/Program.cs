@@ -4,11 +4,12 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.Serialization;
 using System.Security.Cryptography;
 using System.Text;
-using lecture1;
+using NUglify;
 
-namespace miniproject
+namespace lecture1
 {
     class Program
     {
@@ -184,10 +185,84 @@ namespace miniproject
 
             //Console.WriteLine(hosts.First(x => x.hosturl.Contains("google.dk")).robots.IsAllowed("/derp"));
 
-            var seedUrl = new List<Uri>() { new Uri("http://dr.dk") };
-            var crawler = new Crawler(seedUrl, new List<Host>(), httpClient);
+            var seedUrl = new List<Uri> { new Uri("http://dr.dk") };
+            var crawler = RestoreCrawler(seedUrl, new List<Host>(), httpClient, 100);
+
+            Console.CancelKeyPress += delegate
+            {
+                SaveCrawler(crawler);
+            };
 
             crawler.Run();
+            SaveCrawler(crawler);
+
+            var tokenizor = RestoreTokenizor();
+
+            foreach (var site in crawler.SitesVisited.Values)
+            {
+                tokenizor.MakeTokens(site);
+            }
+
+            SaveTokenizor(tokenizor);
+
+            foreach (var token in tokenizor.Tokens.OrderByDescending(x => x.Value.Uris.Sum(y => y.Value)).Take(100))
+            {
+                Console.WriteLine(token.Key + ": " + token.Value.Uris.Sum(x => x.Value));
+            }
+        }
+
+        public static Crawler RestoreCrawler(List<Uri> seedUris, List<Host> hosts, HttpClient httpClient, int limit)
+        {
+            var crawlerSerialser = new DataContractSerializer(typeof(Crawler), null, 1000000, false, true, null);
+
+            Stream crawlerStream = new FileStream("crawler.bin", FileMode.OpenOrCreate, FileAccess.Read, FileShare.None);
+
+            if (crawlerStream.Length != 0) { 
+                var crawler = (Crawler) crawlerSerialser.ReadObject(crawlerStream);
+                crawlerStream.Close();
+                crawler.httpClient = httpClient;
+                crawler.startedWith = crawler.SitesVisited.Count;
+                crawler.limit = limit;
+                Console.WriteLine("Restore crawler state: {0} sites, {1} hosts", crawler.SitesVisited.Count, crawler.hosts.Count);
+                return crawler;
+            }
+            
+            return new Crawler(seedUris, hosts, httpClient, limit);
+        }
+
+        public static void SaveCrawler(Crawler crawler)
+        {
+            var crawlerSerialser = new DataContractSerializer(typeof(Crawler), null, 1000000, false, true, null);
+            Stream crawlerStream = new FileStream("crawler.bin", FileMode.Create, FileAccess.Write, FileShare.None);
+
+            crawlerSerialser.WriteObject(crawlerStream, crawler);
+            crawlerStream.Close();
+            Console.WriteLine("Saved crawler state: {0} sites, {1} hosts", crawler.SitesVisited.Count, crawler.hosts.Count);
+        }
+
+        public static Tokenizor RestoreTokenizor()
+        {
+            var tokenizorSerialser = new DataContractSerializer(typeof(Tokenizor), null, 1024 * 1024 * 1024, false, true, null);
+            var tokenizorStream = new FileStream("tokens.bin", FileMode.OpenOrCreate, FileAccess.Read, FileShare.None);
+
+            if (tokenizorStream.Length != 0)
+            {
+                var tokenizor = (Tokenizor) tokenizorSerialser.ReadObject(tokenizorStream);
+                tokenizorStream.Close();
+                Console.WriteLine("Restored Tokenizor state: {0} tokens", tokenizor.Tokens.Count);
+                return tokenizor;
+            }
+
+            return new Tokenizor();
+        }
+
+        public static void SaveTokenizor(Tokenizor tokenizor)
+        {
+            var tokenizorSerialser = new DataContractSerializer(typeof(Tokenizor), null, 1024 * 1024 * 1024, false, true, null);
+            var tokenizorStream = new FileStream("tokens.bin", FileMode.Create, FileAccess.Write, FileShare.None);
+            
+            tokenizorSerialser.WriteObject(tokenizorStream, tokenizor);
+            tokenizorStream.Close();
         }
     }
 }

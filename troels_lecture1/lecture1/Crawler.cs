@@ -5,44 +5,107 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
-using miniproject;
 
 namespace lecture1
 {
+    [Serializable]
     public class Crawler
     {
-        //public Queue<string> Queue = new Queue<string>();
         public BackQueue BackQueue;
 
-        public HttpClientHandler httpClientHandler;
-
+        [NonSerialized]
         public HttpClient httpClient;
 
         public List<Host> hosts;
 
-        public List<Site> SitesVisited = new List<Site>();
+        public Dictionary<Uri, Site> SitesVisited = new Dictionary<Uri, Site>();
 
-        public Crawler(IEnumerable<Uri> url, IEnumerable<Host> hosts, HttpClient httpClient)
+        public int limit = 0;
+
+        public int startedWith = 0;
+
+        public Crawler(IEnumerable<Uri> url, IEnumerable<Host> hosts, HttpClient httpClient, int limit)
         {
             this.hosts = hosts.ToList();
 
             this.httpClient = httpClient;
 
-            BackQueue = new BackQueue();
+            //InitFromDisk();
 
+            if(BackQueue == null)
+                BackQueue = new BackQueue();
+            
             foreach (var u in url)
             {
                 //var host = new Host(u, httpClient);
                 var host = Host.GetOrCreate(u, this.hosts);
                 BackQueue.AddToQueue(host, u);
             }
+
+            this.limit = limit;
         }
+
+        //public void WriteToDisk()
+        //{
+        //    var formatter = new BinaryFormatter();
+
+        //    var hostSerialiser = new DataContractSerializer(typeof(List<Host>), null, 1000000, false, true, null);
+        //    var sitesSerialiser = new DataContractSerializer(typeof(List<Site>), null, 1000000, false, true, null);
+        //    var backQueueSerialiser = new DataContractSerializer(typeof(BackQueue), null, 1000000, false, true, null);
+
+
+
+        //    Stream hostsStream = new FileStream("hosts.bin", FileMode.Create, FileAccess.Write, FileShare.None);
+        //    Stream sitesStream = new FileStream("sites.bin", FileMode.Create, FileAccess.Write, FileShare.None);
+        //    Stream backQueueStream = new FileStream("backQueue.bin", FileMode.Create, FileAccess.Write, FileShare.None);
+
+        //    //formatter.Serialize(hostsStream, hosts);
+        //    //formatter.Serialize(sitesStream, SitesVisited);
+        //    //formatter.Serialize(backQueueStream, BackQueue);
+        //    hostSerialiser.WriteObject(hostsStream, hosts);
+        //    sitesSerialiser.WriteObject(sitesStream, SitesVisited);
+        //    backQueueSerialiser.WriteObject(backQueueStream, BackQueue);
+
+            
+        //    hostsStream.Close();
+        //    sitesStream.Close();
+        //    backQueueStream.Close();
+        //}
+
+        //public void InitFromDisk()
+        //{
+        //    var hostSerialiser = new DataContractSerializer(typeof(List<Host>), null, 1000000, false, true, null);
+        //    var sitesSerialiser = new DataContractSerializer(typeof(List<Site>), null, 1000000, false, true, null);
+        //    var backQueueSerialiser = new DataContractSerializer(typeof(BackQueue), null, 1000000, false, true, null);
+
+
+        //    Stream hostsStream = new FileStream("hosts.bin", FileMode.OpenOrCreate, FileAccess.Read, FileShare.None);
+        //    Stream sitesStream = new FileStream("sites.bin", FileMode.OpenOrCreate, FileAccess.Read, FileShare.None);
+        //    Stream backQueueStream = new FileStream("backQueue.bin", FileMode.OpenOrCreate, FileAccess.Read, FileShare.None);
+
+        //    if (hostsStream.Length == 0 || sitesStream.Length == 0 || backQueueStream.Length == 0)
+        //    {
+        //        Console.WriteLine("Some data on disk was empty, starting over! ");
+        //    }
+        //    else
+        //    {
+        //        hosts = (List<Host>)hostSerialiser.ReadObject(hostsStream);
+        //        SitesVisited = (List<Site>) sitesSerialiser.ReadObject(sitesStream);
+        //        BackQueue = (BackQueue) backQueueSerialiser.ReadObject(backQueueStream);
+        //        Console.WriteLine("{0} hosts loaded!!", hosts.Count);
+        //        Console.WriteLine("{0} sites loaded!!", SitesVisited.Count);
+        //        Console.WriteLine("{0} urls added to backqueue!!", BackQueue.GetBackQueueCount());
+        //    }
+            
+        //    hostsStream.Close();
+        //    sitesStream.Close();
+        //    backQueueStream.Close();
+        //}
 
         public bool Run()
         {
-            var timeoutms = 1000;
             Stopwatch sw = Stopwatch.StartNew();
-            while (BackQueue.GetBackQueueCount() > 0)
+            while (BackQueue.GetBackQueueCount() > 0 && SitesVisited.Count < limit)
             {
 
                 Uri uri = BackQueue.GetSite();
@@ -54,13 +117,15 @@ namespace lecture1
                     continue;
                 }
 
-                if (DateTime.Now - currentHost.lastVisited < TimeSpan.FromMilliseconds(timeoutms))
+                var earliestNextVisit = currentHost.lastVisited + currentHost.crawlDelay;
+                if (earliestNextVisit > DateTime.Now)
                 {
-                    Console.WriteLine("Sleeping for " + (currentHost.lastVisited.AddMilliseconds(timeoutms) - DateTime.Now).TotalMilliseconds + " ms");
-                    Thread.Sleep(currentHost.lastVisited.AddMilliseconds(timeoutms) - DateTime.Now);
+                    Console.WriteLine("Sleeping for " + (earliestNextVisit - DateTime.Now) + " ms");
+                    Thread.Sleep(earliestNextVisit - DateTime.Now);
                 }
 
                 currentHost.WaitForRobots(httpClient);
+                var t1 = sw.ElapsedMilliseconds;
                 Task<string> content = null;
                 try
                 {
@@ -76,9 +141,12 @@ namespace lecture1
                 if (content == null || content.Status != TaskStatus.RanToCompletion)
                     continue;
 
+                var t2 = sw.ElapsedMilliseconds;
+
                 var site = new Site(uri, content.Result, currentHost);
-                Console.WriteLine("Visited site: {0}", site.url);
-                SitesVisited.Add(site);
+                Console.WriteLine("Visited site: {0}; {1} ms", site.url, (t2 - t1));
+                SitesVisited.Add(uri, site);
+                currentHost.lastVisited = DateTime.Now;
 
                 IEnumerable<string> urls = null;
                 try
@@ -131,15 +199,20 @@ namespace lecture1
                     }
                     
 
-                    if (SitesVisited.Any(x => x.url.Equals(candidateUri)))
+                    //if (SitesVisited.Any(x => x.url.Equals(candidateUri)))
+                    //    continue;
+
+                    if (SitesVisited.ContainsKey(candidateUri))
+                    {
                         continue;
+                    }
 
                     var chost = Host.GetOrCreate(candidateUri, hosts);
 
 
                     if (chost.robots.IsAllowed(candiate))
                     {
-                        if (!candiate.Trim().Equals("") && !SitesVisited.Any(x => x.url.Equals(candidateUri)))
+                        if (!candiate.Trim().Equals(""))
                         {
                             BackQueue.AddToQueue(chost, candidateUri);
                             allowed++;
@@ -155,7 +228,7 @@ namespace lecture1
                         //Console.WriteLine("Obmitted a link: \"{0}\"", candiate);
                     }
                 }
-                Console.WriteLine("{0} sites / {1} seconds = {2} sites pr. second", SitesVisited.Count, sw.Elapsed.Seconds, (double)(SitesVisited.Count / sw.Elapsed.TotalSeconds));
+                Console.WriteLine("{0} sites / {1} seconds = {2} sites pr. second", SitesVisited.Count - startedWith, sw.Elapsed.TotalSeconds, (double)((SitesVisited.Count - startedWith) / sw.Elapsed.TotalSeconds));
                 Console.WriteLine("Visited {0} sites, {1} to-go, added {2} to queue, and {3} was not allowed. ({4} duplicates)\n", SitesVisited.Count, BackQueue.GetBackQueueCount(), allowed, notAllowed, duplicates);
             }
 

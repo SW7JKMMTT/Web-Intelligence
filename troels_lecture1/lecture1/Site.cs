@@ -1,9 +1,10 @@
 ﻿using System;
-using lecture1;
+using System.Collections.Generic;
 
-namespace miniproject
+namespace lecture1
 {
-    public class Site
+    [Serializable]
+    public class Site : IComparable<Uri>
     {
         public Uri url;
 
@@ -13,6 +14,10 @@ namespace miniproject
 
         public Host host;
 
+        public List<string> tokens;
+
+        public TokenUrl TokenUrl;
+
         public Site(Uri url, string content, Host host)
         {
             this.url = url;
@@ -20,6 +25,12 @@ namespace miniproject
             this.lastVisited = DateTime.Now;
             host.lastVisited = DateTime.Now;
             this.host = host;
+            this.TokenUrl = new TokenUrl(url);
+        }
+
+        public int CompareTo(Uri other)
+        {
+            return url.AbsoluteUri.CompareTo(other.AbsoluteUri);
         }
     }
 }

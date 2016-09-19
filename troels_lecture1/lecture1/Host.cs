@@ -1,24 +1,29 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net.Http;
+using System.Runtime.Serialization.Formatters.Binary;
 using System.Security.Policy;
 using System.Threading.Tasks;
-using miniproject;
 
 namespace lecture1
 {
+    [Serializable]
     public class Host : IComparable<Host>
     {
         public Uri hosturl;
 
         public Robots robots;
 
-        private Task<string> robotstextTask = null;
+        [NonSerialized]
+        public Task<string> robotstextTask = null;
 
         public DateTime lastVisited;
 
         public int id = -1;
+
+        public TimeSpan crawlDelay = new TimeSpan(0, 0, 1);
 
         public Host(Uri url)
         {
@@ -44,7 +49,7 @@ namespace lecture1
                 Console.WriteLine("Failed to get robots.txt from {0}", hosturl.Host);
             }
 
-            robots = robotstextTask.Status != TaskStatus.RanToCompletion ? new Robots() : new Robots(robotstextTask.Result);
+            robots = robotstextTask.Status != TaskStatus.RanToCompletion ? new Robots() : new Robots(robotstextTask.Result, this);
         }
 
         public static Host GetOrCreate(Uri url, List<Host> hosts)
@@ -57,13 +62,20 @@ namespace lecture1
                 hosts.Add(host);
                 host.id = hosts.Count;
             }
-            
+
             return host;
         }
 
         public int CompareTo(Host other)
         {
-            return this.lastVisited.CompareTo(other.lastVisited);
+            return this.id - other.id;
         }
+
+        public bool IsReady()
+        {
+            return DateTime.Now > this.lastVisited + this.crawlDelay;
+        }
+
+
     }
 }

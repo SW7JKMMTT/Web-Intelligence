@@ -1,12 +1,12 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security.Policy;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace miniproject
+namespace lecture1
 {
+    [Serializable]
     public class Robots
     {
         private string rawRobotstxt;
@@ -17,8 +17,6 @@ namespace miniproject
 
         public bool IsAllowed(string url)
         {
-
-
             if (url == "")
                 url = "/";
 
@@ -52,7 +50,7 @@ namespace miniproject
             rawRobotstxt = "";
         }
 
-        public Robots(string robotsTxt)
+        public Robots(string robotsTxt, Host parentHost)
         {
             rawRobotstxt = robotsTxt;
 
@@ -77,15 +75,24 @@ namespace miniproject
                     {
                         AllowedList.Add(s.Trim().Split(' ').Last());
                     }
-
-                    if (s.StartsWith("Disallow:"))
+                    else if (s.StartsWith("Disallow:"))
                     {
                         DisallowedList.Add(s.Trim().Split(' ').Last());
                     }
+                    else if (s.StartsWith("Crawl-delay:"))
+                    {
+                        var time = s.Trim().Split(' ').Last();
+                        Console.WriteLine("Found Crawl-delay for: {0}: {1} sec", parentHost.hosturl, time);
+                        parentHost.crawlDelay = TimeSpan.FromSeconds(int.Parse(time));
+                    }
                 }
-            }
 
-            Console.WriteLine("Added " + (AllowedList.Count + DisallowedList.Count) + " rules!");
+                Console.WriteLine("{0}: Added {1} rules!", parentHost.hosturl.Host, (AllowedList.Count + DisallowedList.Count));
+            }
+            else
+            {
+                Console.WriteLine("Couldn't find any rules for '*'");
+            }
         }
     }
 }
