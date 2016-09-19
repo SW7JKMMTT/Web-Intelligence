@@ -1,4 +1,5 @@
 #!/bin/env python
+import os
 import concurrent.futures
 import threading
 import time
@@ -11,7 +12,7 @@ import urllib.parse
 import queue
 import heapq
 import pprint
-from singledispatch import singledispatch
+from functools import singledispatch
 
 class CantStoreTypeError(Exception):
     def __init__(self, t):
@@ -50,6 +51,21 @@ def save_datetime(obj):
         obj.put_nowait(i)
         q[k] = save(i)
     return q
+
+@save.register(list)
+def save_list(obj):
+    l = []
+    for v in obj:
+        l.append(save(v))
+    return l
+
+@save.register(bytes)
+def save_bytes(obj):
+    return str(obj)
+
+@save.register(int)
+def save_bytes(obj):
+    return str(obj)
 
 class Url(object):
     def __init__(self, url):
@@ -184,6 +200,16 @@ class HTMLPage(WebPage):
     def getSize(self):
         return self.size
 
+@save.register(HTMLPage)
+def save_htmlpage(obj):
+    this = {}
+    this["content"] = save(obj.content)
+    this["size"] = save(obj.size)
+    this["linksTo"] = save(obj.linksTo)
+    this["visited"] = save(obj.visited)
+    return this
+
+
 class FrontQueue(object):
     def __init__(self):
         self.q = queue.Queue()
@@ -198,6 +224,8 @@ class FrontQueue(object):
         return self.q.empty()
 
 lock = threading.Lock()
+putlock = threading.Lock()
+getlock = threading.Lock()
 class BackQueue(object):
     def __init__(self, fq):
         self.bqs = {}
@@ -208,20 +236,26 @@ class BackQueue(object):
         return self.bqs[host]
 
     def _putHeap(self, bq):
-        print("Putting {} on the heap".format(bq))
+        putlock.acquire()
         self.bqh.put(bq)
         bq.isQueued = True
+        putlock.release()
 
     def _getHeap(self):
-        bq = self.bqh.get()
+        getlock.acquire()
+        if self.bqh.empty():
+            getlock.release()
+            return None
+        bq = self.bqh.get_nowait()
         if(bq.nextOpen > datetime.now()):
-            self.bqh.put(bq)
+            self.bqh.put_nowait(bq)
+            getlock.release()
             return None
         bq.isQueued = False
+        getlock.release()
         return bq
 
     def _fillbq(self):
-        print("Filling Queue")
         while not self.fq.empty():
             w = self.fq.get()
             host = w.getHost()
@@ -236,16 +270,16 @@ class BackQueue(object):
         lock.acquire()
         if self.bqh.empty():
             self._fillbq()
+        lock.release()
 
         q = self._getHeap()
         if q == None:
-            lock.release()
             return None, None
         if not q.hasWork():
-            lock.release()
             return None, None
         work = q.getWork()
 
+        lock.acquire()
         if not q.hasWork():
             self._fillbq()
         lock.release()
@@ -256,6 +290,14 @@ class BackQueue(object):
         if host.hasWork():
             self._putHeap(host)
         return
+
+@save.register(BackQueue)
+def save_bq(obj):
+    this = {}
+    this["hosts"] = {}
+    for k, v in obj.bqs.items():
+        this["hosts"][k] = save(v)
+    return this
 
 class PageTooLargeError(Exception):
     def __init__(self, size = 0):
@@ -290,14 +332,7 @@ def downloadPage(url, maxSize, allowedTypes, timeout):
                 raise PageTooLargeError()
         return data, pageSize
 
-def getPage(url, timeout):
-    try:
-        data, pageSize = downloadPage(url, MAX_PAGE_SIZE, ["text/html"], timeout)
-    except PageTooLargeError as e:
-        return LargePage(url, e.size)
-    except WrongTypeError as e:
-        return UnparsablePage(url)
-
+def getPage(url, data, size):
     bs = bs4.BeautifulSoup(data, "html.parser")
     links = []
     for link in bs.find_all("a"):
@@ -312,12 +347,10 @@ def getPage(url, timeout):
             continue
         elif loc.startswith("javascript:"): #Kill me now
             continue
-        else:
-            newU = url.join(loc)
+
+        newU = url.join(loc)
         if not newU.getProtocol().startswith("http"):
             continue
-        if not newU.getProtocol().startswith("http"):
-            print("What is this?: {}".format(newU.geturl()))
         links.append(newU)
     return HTMLPage(url, data, len(data), links)
 
@@ -331,19 +364,64 @@ def load_url(fq, url, host, timeout):
         return
     print("Downloading {}".format(url.geturl()))
     try:
-        page = getPage(url, timeout)
+        content, size = downloadPage(url, MAX_PAGE_SIZE, ["text/html"], timeout)
+        page = getPage(url, content, size)
         for l in page.getLinks():
             fq.put(l)
         return page
     except (requests.ReadTimeout, requests.ConnectionError, requests.TooManyRedirects):
         print("Read timed out")
-        return WebPage(url)
+        return None
+    except PageTooLargeError as p:
+        return LargePage(p.size)
+    except WrongTypeError as e:
+        return UnparsablePage()
 
 SEEDURLS = [
-        'http://dr.dk',
+        'http://reddit.com',
+        'https://pornhub.com',
+        'http://fbi.gov',
+        'http://example.com',
+        'https://change.org',
+        'https://donaldjtrump.com',
     ]
 
 fq = FrontQueue()
+
+def pathJoin(path, new):
+    new = new.strip("/")
+    if new == "":
+        new = "darude"
+    return os.path.join(path, new)
+
+@singledispatch
+def todisk(obj, path):
+    print("You can't save {}".format(type(obj)))
+
+@todisk.register(str)
+def todisk_str(obj, path):
+    with open(path, "w") as f:
+        print(obj, file=f)
+
+@todisk.register(list)
+def todisk_list(obj, path):
+    allStrs = all(type(o) == str for o in obj)
+    if allStrs:
+        with open(path, "w") as f:
+            for v in obj:
+                print(v, file=f)
+    else:
+        os.makedirs(path, exist_ok=True)
+        for k, v in enumerate(obj):
+            p = pathJoin(path, str(k))
+            todisk(v, p)
+
+@todisk.register(dict)
+def todisk_dict(obj, path):
+    os.makedirs(path, exist_ok=True)
+    for k, v in obj.items():
+        p = pathJoin(path, str(k))
+        todisk(v, p)
 
 for url in SEEDURLS:
     u = Url(url)
@@ -351,20 +429,30 @@ for url in SEEDURLS:
     fq.put(u)
 
 sel = BackQueue(fq)
+running = True
 
 def run():
-    while True:
+    while running:
         w, h = sel.getNext()
         if w == None:
             continue
-        pprint.pprint(save(h))
         page = load_url(fq, w, h, 2)
         if page != None:
             h.putVisited(page)
         sel.done(h)
 
-for i in range(1):
+th = []
+for i in range(10):
     t = threading.Thread(target=run)
     print("Starting {}".format(i))
-    time.sleep(2)
     t.start()
+    th.append(t)
+    time.sleep(.1)
+
+time.sleep(119)
+print("--------------------------- [2 secs WARNING] -----------------------")
+running = False
+for thread in th:
+    thread.join()
+todisk(save(sel), "Back")
+exit(0)
