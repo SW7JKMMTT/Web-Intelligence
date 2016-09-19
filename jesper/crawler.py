@@ -10,6 +10,7 @@ from url_normalize import url_normalize
 from datetime import datetime, timedelta
 import urllib.parse
 import queue
+import cProfile
 import heapq
 import pprint
 from functools import singledispatch
@@ -121,6 +122,9 @@ class Host():
     def putVisited(self, page):
         self.urls[page.getPath()] = page
 
+    def getVisited(self, path):
+        return self.urls[path]
+
     def isVisited(self, url):
         return url.getPath() in self.urls.keys()
 
@@ -176,9 +180,22 @@ class LargePage(WebPage):
     def getSize(self):
         return self.size
 
+@save.register(LargePage)
+def save_largepage(obj):
+    this = {}
+    this["url"] = save(obj.url)
+    this["size"] = save(obj.size)
+    return this
+
 class UnparsablePage(WebPage):
     def __init__(self, url):
         WebPage.__init__(self, url)
+
+@save.register(UnparsablePage)
+def save_unparsablepage(obj):
+    this = {}
+    this["url"] = save(obj.url)
+    return this
 
 class HTMLPage(WebPage):
     def __init__(self, url, content, size, links):
@@ -242,11 +259,11 @@ class BackQueue(object):
         putlock.release()
 
     def _getHeap(self):
-        getlock.acquire()
         if self.bqh.empty():
-            getlock.release()
             return None
+        getlock.acquire()
         bq = self.bqh.get_nowait()
+        bq.isQueued = True
         if(bq.nextOpen > datetime.now()):
             self.bqh.put_nowait(bq)
             getlock.release()
@@ -361,7 +378,7 @@ def load_url(fq, url, host, timeout):
         return None
     rob = host.getRobots(url)
     if rob != None and not rob.isAllowed(url.getPath()):
-        return
+        return UnparsablePage(url)
     print("Downloading {}".format(url.geturl()))
     try:
         content, size = downloadPage(url, MAX_PAGE_SIZE, ["text/html"], timeout)
@@ -371,11 +388,11 @@ def load_url(fq, url, host, timeout):
         return page
     except (requests.ReadTimeout, requests.ConnectionError, requests.TooManyRedirects):
         print("Read timed out")
-        return None
+        return UnparsablePage(url)
     except PageTooLargeError as p:
         return LargePage(url, p.size)
     except WrongTypeError as e:
-        return UnparsablePage()
+        return UnparsablePage(url)
 
 SEEDURLS = [
         'http://reddit.com',
@@ -432,34 +449,50 @@ sel = BackQueue(fq)
 running = True
 updated = []
 
-def run():
+def arun():
     while running:
         w, h = sel.getNext()
         if w == None:
             continue
-        updated.append(h)
         page = load_url(fq, w, h, 2)
+        updated.append(w)
         if page != None:
             h.putVisited(page)
         sel.done(h)
 
+def real_run():
+    cProfile.runctx('arun()', globals(), locals(), filename='runner')
+
 th = []
-for i in range(10):
-    t = threading.Thread(target=run)
+for i in range(1):
+    t = threading.Thread(target=real_run)
     print("Starting {}".format(i))
     t.start()
     th.append(t)
 
 start = datetime.now()
-while datetime.now() < start + timedelta(seconds=20):
-    os.makedirs("Back/hosts", exist_ok=True)
-    ups = list(updated)
-    updated = []
+ups = []
+try:
+    while datetime.now() < start + timedelta(seconds=100):
+        os.makedirs("Back/hosts", exist_ok=True)
+        ups = updated
+        updated = []
+        for k, v in enumerate(ups):
+            print("-----Saving {}, {} to go".format(v, len(ups)-k))
+            os.makedirs("Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"), exist_ok=True)
+            todisk(save(sel.getHostQueue(v.getHost()).getVisited(v.getPath())), "Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"))
+            sel.getHostQueue(v.getHost()).getVisited(v.getPath()).content = ""
+except:
+    print("Stopping")
     for v in ups:
-        print("Saving {}".format(v.host))
-        todisk(save(v), "Back/hosts/" + v.host)
+        updated.append(v)
+    running = False
 print("--------------------------- [2 secs WARNING] -----------------------")
 running = False
+for v in updated:
+    print("-----Saving {}, {} to go".format(v, len(ups)))
+    os.makedirs("Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"), exist_ok=True)
+    todisk(save(sel.getHostQueue(v.getHost()).getVisited(v.getPath())), "Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"))
 for thread in th:
     thread.join()
 exit(0)
