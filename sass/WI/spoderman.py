@@ -1,101 +1,138 @@
 #!/bin/python3
-from near_dup import near_dup_percentage
 import r2d2
-import requests as r
+from space import FinalFrontier
+from hosts_n_pages import WebPage
+import requests
+from contextlib import closing
+from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import as_completed
+from concurrent.futures import wait, FIRST_COMPLETED
 import queue as q
-from pprint import pprint
-from data_store import *
-from urllib.parse import urlparse
-import threading
+from urllib.parse import urlparse, urlunparse, urljoin
 import time
-import matplotlib.pyplot as plt
 
-front_queue = q.Queue()
-back_queues = {}
+num_crawler_workers = 20
+
 user_agent = "spoderman"
 header = { 'user-agent': user_agent }
+
 seed_urls = [
-        "https://www.google.dk/",
-        "http://www.npm.org/",
-        "https://www.satai.dk/",
-        "https://news.ycombinator.com/"
+        "http://reddit.com",
+        "https://pornhub.com",
+        "http://fbi.gov",
+        "http://example.com",
+        "https://change.org",
+        "https://donaldjtrump.com"
 ]
+
+scheme_whitelist = [
+        "http",
+        "https",
+]
+
+file_extensions_whitelist = [
+        ".html",
+        ".php",
+        ".htm",
+        ".asp",
+        ".aspx"
+]
+
 
 def crawl_url(url):
     print('URL:', url)
     try:
-        return r.get(url, headers=header, timeout=5)
-    except:
-        pass
-    return None
-
-def put_it_in(url, front_queue=front_queue):
-    if r2d2.is_allowed(url):
-        front_queue.put(url)
+        with requests.Session() as s:
+            return s.get(url, timeout=2)
+    except (requests.ConnectionError, requests.ReadTimeout, requests.TooManyRedirects):
+        return None
 
 
-def front_to_back():
-    while True:
-        req = crawl_url(front_queue.get())
+def crawler(url_frontier):
+    host = url_frontier.get()
+    if host.next_access > time.time():
+        print('Waiting', host.next_access - time.time())
+        time.sleep(host.next_access - time.time())
+    # print('Crawling from', host.host,  host.back_queue.qsize())
+    url = host.back_queue.get()
+    parsed_url = urlparse(url)
+    if r2d2.is_allowed(url) and not host.has_page(parsed_url.path):
+        req = crawl_url(url)
         if req:
-            page = WebPage(request=req)
-            get_host(url=req.url).add_page(page)
+            page = WebPage(request=req, host=host)
 
-            mah_q = None
-            try:
-                mah_q = back_queues[urlparse(req.url).netloc]
-            except:
-                mah_q = q.Queue()
-                back_queues[urlparse(req.url).netloc] = mah_q
-            for link in page.links:
-                mah_q.put(link)
+            for link in _links_from_webpage(page, url_frontier):
+                url_frontier.front_queue.put(link)
+        else:
+            print('FAK!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+    else:
+        print(url, 'not gunna visit that again' if host.has_page(parsed_url.path) else 'not allowed')
+    url_frontier.done(host)
+
+def _links_from_webpage(webpage, url_frontier):
+    soup = BeautifulSoup(webpage.data, 'html.parser')
+    dem_links = [ a_tag.get('href') for a_tag in soup.find_all('a') ]
+    real_links = []
+    for link in dem_links:
+        link = urljoin(webpage.url, link)
+        parsed_url = urlparse(link)
+        link_host = url_frontier.get_host(parsed_url.netloc)
+        sane_url = urlunparse(
+                (parsed_url.scheme, parsed_url.netloc, parsed_url.path, '', '', ''))
+        if _want_link(parsed_url.path):
+            if (not sane_url in real_links) and (parsed_url.scheme in scheme_whitelist):
+                real_links.append(sane_url)
+    return real_links
 
 
-def back_to_front():
-    while True:
-        for bq in list(back_queues.values()):
-            if bq.empty():
-                continue
-            url = bq.get()
-            put_it_in(url)
+def _want_link(path):
+    page = path.split('/')[-1]
+    if not ('.' in page) or any(file_extension in page for file_extension in file_extensions_whitelist):
+        return True
+    return False
 
-def stats():
+
+def stats(f_q, b_q_heap, hosts):
     f, axarr = plt.subplots(2)
     plt.ion()
     plt.title('Stats')
-    while True:
-        bq_size = 0
-        for bq in list(back_queues.values()):
-            bq_size += bq.qsize()
-        axarr[0].bar(range(3), [front_queue.qsize(), bq_size, len(get_hosts())])
-        host_list = [h for h in get_hosts().values() if len(h.webpages) > 1 ]
-        axarr[1].bar(range(len(host_list)), [len(h.webpages) for h in host_list])
-        axarr[1].xticks([h.host for h in host_list], range(len(host_list)))
+    plt.ylabel('Num')
+    return axarr
 
-        plt.pause(0.1)
 
-def init_seed_data():
-    for url in seed_urls:
-        if r2d2.is_allowed(url):
-            front_queue.put(url)
+def update_stats(axarr, f_q, b_q_dict, hosts, crawled):
+    bq_size = 0
+    for bq in b_q_dict.values():
+        bq_size += bq.qsize()
+    host_list = [len(h.webpages) for h in hosts.values() if len(h.webpages) > 1 ]
+    axarr[0].cla()
+    axarr[0].set_xticks(range(5))
+    axarr[0].set_xticklabels(['Front Queue', 'Comb. Back Queue', 'Hosts', 'Found Pages', 'Crawled Pages'], ha='left')
+    axarr[0].bar(range(5), [f_q.qsize(), bq_size, len(hosts), sum(host_list), crawled])
+    axarr[1].cla()
+    axarr[1].bar(range(len(host_list)), host_list)
+    axarr[1].set_xticks(range(len(host_list)))
+    axarr[1].set_xticklabels(hosts, rotation=90, ha='center')
+    plt.pause(0.1)
 
 
 if __name__ == '__main__':
-    init_seed_data()
+    url_frontier = FinalFrontier()
 
-    front_threads = []
-    back_threads = []
-    for i in range(1):
-        f_t = threading.Thread(target=front_to_back)
-        b_t = threading.Thread(target=back_to_front)
-        front_threads.append(f_t)
-        back_threads.append(b_t)
-        f_t.start()
-        b_t.start()
+    for url in seed_urls:
+        url_frontier.front_queue.put(url)
 
-    stats()
-        # for host, data in get_hosts().items():
-        #     if len(data.webpages):
-        #         print('Host:', host,'[', len(data.webpages),']')
+    should_cont = True
+    with ThreadPoolExecutor(max_workers=num_crawler_workers + 1) as executor:
+        crawled = 0
+        while should_cont and crawled < 10:
+            futures = { executor.submit(crawler, url_frontier) for i in range(num_crawler_workers) }
+            crawled = num_crawler_workers
+            try:
+                while True:
+                    futures = wait(futures, return_when=FIRST_COMPLETED)[1]
+                    futures.add(executor.submit(crawler, url_frontier))
+                    crawled += 1
+            except KeyboardInterrupt:
+                should_cont = False
+
