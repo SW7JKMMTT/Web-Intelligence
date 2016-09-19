@@ -122,7 +122,7 @@ class Host():
         self.urls[page.getPath()] = page
 
     def isVisited(self, url):
-        return url.getPath() in self.urls
+        return url.getPath() in self.urls.keys()
 
     def getRobots(self, url):
         if self.robots == None:
@@ -430,12 +430,14 @@ for url in SEEDURLS:
 
 sel = BackQueue(fq)
 running = True
+updated = []
 
 def run():
     while running:
         w, h = sel.getNext()
         if w == None:
             continue
+        updated.append(h)
         page = load_url(fq, w, h, 2)
         if page != None:
             h.putVisited(page)
@@ -449,10 +451,15 @@ for i in range(10):
     th.append(t)
     time.sleep(.1)
 
-time.sleep(119)
+start = datetime.now()
+while datetime.now() < start + timedelta(seconds=20):
+    os.makedirs("Back/hosts", exists_ok=True)
+    ups = updated
+    updated = []
+    for v in updated:
+        todisk(save(v), "Back/hosts/" + v.host)
 print("--------------------------- [2 secs WARNING] -----------------------")
 running = False
 for thread in th:
     thread.join()
-todisk(save(sel), "Back")
 exit(0)
