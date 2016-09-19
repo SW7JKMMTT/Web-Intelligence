@@ -2,6 +2,9 @@
 import os
 import concurrent.futures
 import threading
+import multiprocessing
+from multiprocessing.managers import SyncManager
+from multiprocessing import Queue
 import time
 import requests
 import bs4
@@ -96,16 +99,19 @@ class Url(object):
     def __str__(self):
         return "< URL: {} >".format(self.url.geturl())
 
+    def __reduce__(self):
+        return (Url, (self.geturl(),))
+
 @save.register(Url)
 def save_url(obj):
     return obj.geturl()
 
 
 class Host():
-    def __init__(self, host):
+    def __init__(self, host, urls={}):
         self.host = host
         self.robots = None
-        self.urls = {}
+        self.urls = urls
         self.open = queue.Queue()
         self.nextOpen = datetime.now()
         self.isQueued = False
@@ -131,8 +137,9 @@ class Host():
     def getRobots(self, url):
         if self.robots == None:
             try:
-                print("Getting robots file {}".format(url.join("/robots.txt").geturl()))
-                r = requests.get(url.join("/robots.txt").geturl(), allow_redirects=False, timeout=2)
+                roburl = url.join("/robots.txt")
+                print("Getting robots file {}".format(roburl.geturl()))
+                r = requests.get(roburl.geturl(), allow_redirects=False, timeout=2)
             except (requests.ConnectionError, requests.TooManyRedirects, requests.ReadTimeout):
                 return None
             self.robots = robots.compileRobots(r.text)
@@ -148,6 +155,9 @@ class Host():
 
     def __str__(self):
         return "< HOST: {}, ITEMS: {} >".format(self.host, self.open.qsize())
+
+    def __reduce__(self):
+        return (Host, (self.host, self.urls,))
 
 @save.register(Host)
 def save_host(obj):
@@ -172,6 +182,9 @@ class WebPage(object):
     def getSize(self):
         raise NotImplementedError()
 
+    def __reduce__(self):
+        return (WebPage, (self.url,))
+
 class LargePage(WebPage):
     def __init__(self, url, size = 0):
         WebPage.__init__(self, url)
@@ -179,6 +192,9 @@ class LargePage(WebPage):
 
     def getSize(self):
         return self.size
+
+    def __reduce__(self):
+        return (LargePage, (self.url, self.size, ))
 
 @save.register(LargePage)
 def save_largepage(obj):
@@ -190,6 +206,9 @@ def save_largepage(obj):
 class UnparsablePage(WebPage):
     def __init__(self, url):
         WebPage.__init__(self, url)
+
+    def __reduce__(self):
+        return (LargePage, (self.url, ))
 
 @save.register(UnparsablePage)
 def save_unparsablepage(obj):
@@ -216,6 +235,9 @@ class HTMLPage(WebPage):
 
     def getSize(self):
         return self.size
+
+    def __reduce__(self):
+        return (HTMLPage, (self.url, self.content, self.size, self.linksTo, ))
 
 @save.register(HTMLPage)
 def save_htmlpage(obj):
@@ -349,8 +371,9 @@ def downloadPage(url, maxSize, allowedTypes, timeout):
                 raise PageTooLargeError()
         return data, pageSize
 
+only_a_tags = bs4.SoupStrainer("a")
 def getPage(url, data, size):
-    bs = bs4.BeautifulSoup(data, "html.parser")
+    bs = bs4.BeautifulSoup(data, "html.parser", parse_only=only_a_tags)
     links = []
     for link in bs.find_all("a"):
         if not "href" in link.attrs:
@@ -403,7 +426,8 @@ SEEDURLS = [
         'https://donaldjtrump.com',
     ]
 
-fq = FrontQueue()
+class MyManager(SyncManager):
+    pass
 
 def pathJoin(path, new):
     new = new.strip("/")
@@ -440,59 +464,77 @@ def todisk_dict(obj, path):
         p = pathJoin(path, str(k))
         todisk(v, p)
 
+MyManager.register("fq", FrontQueue)
+MyManager.register("bq", BackQueue)
+MyManager.register("up", queue.Queue)
+
+def Manager():
+    m = MyManager()
+    m.start()
+    return m
+
+# fq = FrontQueue()
+# sel = BackQueue(fq)
+running = multiprocessing.Value("b", True)
+
+m = Manager()
+#updated = m.up()
+updated = Queue()
+fq = m.fq()
+sel = m.bq(fq)
+
 for url in SEEDURLS:
     u = Url(url)
     print("Adding seed {}".format(u))
     fq.put(u)
 
-sel = BackQueue(fq)
-running = True
-updated = []
-
 def arun():
-    while running:
+    while running.value:
         w, h = sel.getNext()
         if w == None:
             continue
         page = load_url(fq, w, h, 2)
-        updated.append(w)
         if page != None:
             h.putVisited(page)
+        updated.put(page)
         sel.done(h)
 
-def real_run():
-    cProfile.runctx('arun()', globals(), locals(), filename='runner')
+def real_run(i):
+    print("Starting {}".format(i))
+    # cProfile.runctx('arun()', globals(), locals(), filename="runner" + str(i) + ".stats")
+    arun()
+    return 0
 
 th = []
-for i in range(1):
-    t = threading.Thread(target=real_run)
-    print("Starting {}".format(i))
+for i in range(200):
+    t = multiprocessing.Process(target=real_run, args=[i])
     t.start()
     th.append(t)
 
 start = datetime.now()
-ups = []
 try:
-    while datetime.now() < start + timedelta(seconds=100):
-        os.makedirs("Back/hosts", exist_ok=True)
-        ups = updated
-        updated = []
-        for k, v in enumerate(ups):
-            print("-----Saving {}, {} to go".format(v, len(ups)-k))
-            os.makedirs("Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"), exist_ok=True)
-            todisk(save(sel.getHostQueue(v.getHost()).getVisited(v.getPath())), "Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"))
-            sel.getHostQueue(v.getHost()).getVisited(v.getPath()).content = ""
-except:
+    os.makedirs("Back/hosts", exist_ok=True)
+    while datetime.now() < start + timedelta(seconds=60):
+        v = updated.get()
+        print("-----Saving {}, {} to go".format(v, updated.qsize()))
+        os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
+        host = sel.getHostQueue(v.url.getHost())
+        todisk(save(v), "Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"))
+        v.content = ""
+except KeyboardInterrupt:
     print("Stopping")
-    for v in ups:
-        updated.append(v)
-    running = False
 print("--------------------------- [2 secs WARNING] -----------------------")
-running = False
-for v in updated:
-    print("-----Saving {}, {} to go".format(v, len(ups)))
-    os.makedirs("Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"), exist_ok=True)
-    todisk(save(sel.getHostQueue(v.getHost()).getVisited(v.getPath())), "Back/hosts/{}/urls/{}".format(v.getHost(), v.getPath() or "darude"))
-for thread in th:
+running.value = False
+time.sleep(200)
+while not updated.empty():
+    print("---PREGET SIZE: {}".format(updated.qsize()))
+    v = updated.get()
+    print("-----Saving {}, {} to go".format(v, updated.qsize()))
+    os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
+    host = sel.getHostQueue(v.url.getHost())
+    todisk(save(v), "Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"))
+    print("SAVED")
+for k, thread in enumerate(th):
+    print("Joined {}".format(k))
     thread.join()
 exit(0)
