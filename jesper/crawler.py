@@ -449,14 +449,14 @@ for i in range(10):
     print("Starting {}".format(i))
     t.start()
     th.append(t)
-    time.sleep(.1)
 
 start = datetime.now()
 while datetime.now() < start + timedelta(seconds=20):
     os.makedirs("Back/hosts", exist_ok=True)
-    ups = updated
+    ups = list(updated)
     updated = []
-    for v in updated:
+    for v in ups:
+        print("Saving {}".format(v.host))
         todisk(save(v), "Back/hosts/" + v.host)
 print("--------------------------- [2 secs WARNING] -----------------------")
 running = False
