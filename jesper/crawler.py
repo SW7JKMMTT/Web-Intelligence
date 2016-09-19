@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python3
 import os
 import concurrent.futures
 import threading
@@ -373,7 +373,7 @@ def load_url(fq, url, host, timeout):
         print("Read timed out")
         return None
     except PageTooLargeError as p:
-        return LargePage(p.size)
+        return LargePage(url, p.size)
     except WrongTypeError as e:
         return UnparsablePage()
 
@@ -453,7 +453,7 @@ for i in range(10):
 
 start = datetime.now()
 while datetime.now() < start + timedelta(seconds=20):
-    os.makedirs("Back/hosts", exists_ok=True)
+    os.makedirs("Back/hosts", exist_ok=True)
     ups = updated
     updated = []
     for v in updated:
