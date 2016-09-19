@@ -29,7 +29,7 @@ class Host(object):
         file_path = os.path.join('./hosts/', self.host, dirname)
         if not os.path.exists(file_path):
             os.makedirs(file_path)
-	file_name = os.path.basename(path)
+        file_name = os.path.basename(path)
         if len(file_name) < 1:
             file_name = 'index.html'
         with open(os.path.join(file_path, file_name), 'w') as f:
