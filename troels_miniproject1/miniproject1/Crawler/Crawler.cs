@@ -45,11 +45,10 @@ namespace miniproject1.Crawler
 
         public bool Run()
         {
-            Stopwatch sw = Stopwatch.StartNew();
+            var sw = Stopwatch.StartNew();
             while (BackQueue.GetBackQueueCount() > 0 && SitesVisited.Count < Limit)
             {
-
-                Uri uri = BackQueue.GetSite();
+                var uri = BackQueue.GetSite();
                 var currentHost = Host.GetOrCreate(uri, Hosts);
 
                 if (!currentHost.Robots.IsAllowed(uri))
@@ -105,16 +104,16 @@ namespace miniproject1.Crawler
                     Console.WriteLine(ex.Message);
                 }
 
-                int allowed = 0;
-                int notAllowed = 0;
-                int duplicates = 0;
+                var allowed = 0;
+                var notAllowed = 0;
+                var duplicates = 0;
 
                 if (urls == null)
                     continue;
 
                 foreach (var s in urls)
                 {
-                    string candiate = "";
+                    var candiate = "";
 
                     if (s.StartsWith("http://") || s.StartsWith("https://"))
                         candiate = s;

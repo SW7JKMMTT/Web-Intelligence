@@ -14,7 +14,6 @@ namespace miniproject1
     {
         static void Main(string[] args)
         {
-
             var websiteUrls = new List<Uri>();
             //websiteUrls.Add(@"https://en.wikipedia.org");
             //websiteUrls.Add(@"https://www.satai.dk");
@@ -52,7 +51,7 @@ namespace miniproject1
 
             foreach (var site in crawler.SitesVisited.Values)
             {
-                Tokenizor.MakeTokens(site, indexer.Tokens);
+                Tokenizor.AddTokensToTokenList(site, indexer.Tokens);
             }
 
             SerializationHelper.SaveIndex(indexer);
@@ -60,7 +59,7 @@ namespace miniproject1
             // Find "weird" tokens
             foreach (var token in indexer.Tokens
                 .OrderByDescending(x => x.Value.Uris.Sum(y => y.Value))
-                .Where(x => !Regex.IsMatch(x.Key, @"^[a-zA-Z0-9æøå-]+$"))
+                .Where(x => !Regex.IsMatch(x.Key, @"^[a-zA-Z0-9æøåÆØÅ-]+$"))
                 .Take(100))
             {
                 Console.WriteLine(token.Key + ": " + token.Value.Uris.Sum(x => x.Value));
@@ -71,6 +70,5 @@ namespace miniproject1
             Console.WriteLine("Text/Number/dash only tokens: " + indexer.Tokens.Count(x => Regex.IsMatch(x.Key, @"^[a-zA-Z0-9-]+$")));
             Console.WriteLine("Total tokens: " + indexer.Tokens.Count);
         }
-
     }
 }
