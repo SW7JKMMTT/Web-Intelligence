@@ -108,11 +108,13 @@ def save_url(obj):
 
 
 class Host():
-    def __init__(self, host, urls={}):
+    def __init__(self, host, urls={}, o=[]):
         self.host = host
         self.robots = None
         self.urls = urls
         self.open = queue.Queue()
+        for i in o:
+            self.open.put(i)
         self.nextOpen = datetime.now()
         self.isQueued = False
 
@@ -154,10 +156,11 @@ class Host():
         return self.nextOpen == other.nextOpen
 
     def __str__(self):
-        return "< HOST: {}, ITEMS: {} >".format(self.host, self.open.qsize())
+        return "< HOST: {}, ITEMS: {}, NEXTOPEN: {} >".format(self.host, self.open.qsize(), self.nextOpen)
 
     def __reduce__(self):
-        return (Host, (self.host, self.urls,))
+        t = [i for i in self.open.queue]
+        return (Host, (self.host, self.urls, t))
 
 @save.register(Host)
 def save_host(obj):
@@ -262,75 +265,139 @@ class FrontQueue(object):
     def empty(self):
         return self.q.empty()
 
-lock = threading.Lock()
-putlock = threading.Lock()
-getlock = threading.Lock()
-class BackQueue(object):
-    def __init__(self, fq):
-        self.bqs = {}
-        self.bqh = queue.PriorityQueue()
-        self.fq = fq
+class MainQueue(object):
+    def __init__(self):
+        self.hostnames = {}
+        self.hostMap = {}
+        self.hosts = queue.Queue()
+        self.clients = []
+        self.fqs = {}
+        self.fq = []
+
+    def connect(self):
+        newIndex = len(self.clients)
+        self.clients.insert(newIndex, True)
+        self.fqs[newIndex] = []
+        return newIndex
+
+    def discover(self, newUrls):
+        self.fq.extend(newUrls)
+
+    def getFq(self, cid):
+        return self.fqs[cid]
 
     def getHostQueue(self, host):
-        return self.bqs[host]
+        return self.hostnames[host]
 
-    def _putHeap(self, bq):
-        putlock.acquire()
-        self.bqh.put(bq)
+    def _putHost(self, bq):
+        self.hosts.put(bq)
         bq.isQueued = True
-        putlock.release()
 
-    def _getHeap(self):
-        if self.bqh.empty():
+    def _getHost(self):
+        if self.hosts.empty():
             return None
-        getlock.acquire()
-        bq = self.bqh.get_nowait()
-        bq.isQueued = True
-        if(bq.nextOpen > datetime.now()):
-            self.bqh.put_nowait(bq)
-            getlock.release()
-            return None
-        bq.isQueued = False
-        getlock.release()
-        return bq
+        host = self.hosts.get_nowait()
+        host.isQueued = False
+        return host
 
     def _fillbq(self):
-        while not self.fq.empty():
-            w = self.fq.get()
-            host = w.getHost()
-            if not host in self.bqs:
-                self.bqs[host] = Host(host)
-            q = self.getHostQueue(w.getHost())
-            q.putWork(w)
-            if not q.isQueued:
-                self._putHeap(q)
+        tmpl = self.fq
+        self.fq = []
+        for w in tmpl:
+            hostname = w.getHost()
+            if hostname in self.hostMap:
+                cowner = self.hostMap[hostname]
+                self.fqs[cowner].append(w)
+            else:
+                if not hostname in self.hostnames:
+                    self.hostnames[hostname] = Host(hostname)
+                host = self.hostnames[hostname]
+                host.putWork(w)
+                if not host.isQueued:
+                    self._putHost(host)
+
+    def getNext(self, cid):
+        if self.hosts.empty():
+            self._fillbq()
+
+        q = self._getHost()
+        if q == None:
+            return None
+
+        self.hostMap[q.host] = cid
+
+        return q
+
+class ClientQueue(object):
+    def __init__(self, mq):
+        self.mq = mq
+        self.fq = []
+        self.myhosts = {}
+        self.hostHeap = queue.PriorityQueue()
+        self.cid = mq.connect()
+
+    def discover(self, url):
+        self.fq.append(url)
+
+    def _putHeap(self, host):
+        self.hostHeap.put(host)
+        host.isQueued = True
+
+    def _getHeap(self):
+        if self.hostHeap.empty():
+            return self._takeHost()
+        host = self.hostHeap.get_nowait()
+        host.isQueued = True
+        if(host.nextOpen > datetime.now()):
+            self.hostHeap.put_nowait(host)
+            return self._takeHost()
+        host.isQueued = False
+        return host
+
+    def _takeHost(self):
+        print("----Taking from main----")
+        newHost = self.mq.getNext(self.cid)
+        if newHost == None:
+            return
+        print("New Host is: ", newHost)
+        self.myhosts[newHost.host] = newHost
+        return newHost
+
+    def _fillbq(self):
+        tmp = self.fq
+        self.fq = []
+        tmp.extend(self.mq.getFq(self.cid))
+        unknown = []
+        for url in tmp:
+            hostname = url.getHost()
+            if hostname in self.myhosts:
+                host = self.myhosts[hostname]
+                host.putWork(url)
+                if not host.isQueued:
+                    self._putHeap(host)
+            else:
+                unknown.append(url)
+        self.mq.discover(unknown)
 
     def getNext(self):
-        lock.acquire()
-        if self.bqh.empty():
+        if self.hostHeap.empty():
             self._fillbq()
-        lock.release()
 
-        q = self._getHeap()
-        if q == None:
-            return None, None
-        if not q.hasWork():
-            return None, None
-        work = q.getWork()
+        host = self._getHeap()
+        print(host)
+        if host == None:
+            return None
 
-        lock.acquire()
-        if not q.hasWork():
-            self._fillbq()
-        lock.release()
-        return work, q
+        return host
 
     def done(self, host):
-        host.nextOpen = datetime.now() + timedelta(seconds=3)
+        host.nextOpen = datetime.now() + timedelta(seconds = 3)
         if host.hasWork():
             self._putHeap(host)
-        return
+        else:
+            self._fillbq()
 
-@save.register(BackQueue)
+@save.register(MainQueue)
 def save_bq(obj):
     this = {}
     this["hosts"] = {}
@@ -345,7 +412,7 @@ class PageTooLargeError(Exception):
 class WrongTypeError(Exception):
     pass
 
-MAX_PAGE_SIZE=20971520
+MAX_PAGE_SIZE=20971520/2
 def downloadPage(url, maxSize, allowedTypes, timeout):
     with requests.Session() as s:
         r = s.get(url.geturl(), timeout=timeout, stream=True)
@@ -395,7 +462,7 @@ def getPage(url, data, size):
     return HTMLPage(url, data, len(data), links)
 
 # Retrieve a single page and report the URL and contents
-def load_url(fq, url, host, timeout):
+def load_url(q, url, host, timeout):
     if host.isVisited(url):
         print("Already visited")
         return None
@@ -407,7 +474,7 @@ def load_url(fq, url, host, timeout):
         content, size = downloadPage(url, MAX_PAGE_SIZE, ["text/html"], timeout)
         page = getPage(url, content, size)
         for l in page.getLinks():
-            fq.put(l)
+            q.discover(l)
         return page
     except (requests.ReadTimeout, requests.ConnectionError, requests.TooManyRedirects):
         print("Read timed out")
@@ -418,7 +485,6 @@ def load_url(fq, url, host, timeout):
         return UnparsablePage(url)
 
 SEEDURLS = [
-        'http://reddit.com',
         'https://pornhub.com',
         'http://fbi.gov',
         'http://example.com',
@@ -464,8 +530,7 @@ def todisk_dict(obj, path):
         p = pathJoin(path, str(k))
         todisk(v, p)
 
-MyManager.register("fq", FrontQueue)
-MyManager.register("bq", BackQueue)
+MyManager.register("bq", MainQueue)
 MyManager.register("up", queue.Queue)
 
 def Manager():
@@ -474,30 +539,28 @@ def Manager():
     return m
 
 # fq = FrontQueue()
-# sel = BackQueue(fq)
 running = multiprocessing.Value("b", True)
 
 m = Manager()
 #updated = m.up()
 updated = Queue()
-fq = m.fq()
-sel = m.bq(fq)
+sel = m.bq()
 
-for url in SEEDURLS:
-    u = Url(url)
-    print("Adding seed {}".format(u))
-    fq.put(u)
+sel.discover([Url(url) for url in SEEDURLS])
 
 def arun():
+    cq = ClientQueue(sel)
     while running.value:
-        w, h = sel.getNext()
-        if w == None:
+        h = cq.getNext()
+        if h == None:
             continue
-        page = load_url(fq, w, h, 2)
+        assert(h.hasWork())
+        w = h.getWork()
+        page = load_url(cq, w, h, 2)
         if page != None:
             h.putVisited(page)
-        updated.put(page)
-        sel.done(h)
+            updated.put(page)
+        cq.done(h)
 
 def real_run(i):
     print("Starting {}".format(i))
@@ -506,7 +569,7 @@ def real_run(i):
     return 0
 
 th = []
-for i in range(200):
+for i in range(150):
     t = multiprocessing.Process(target=real_run, args=[i])
     t.start()
     th.append(t)
@@ -514,7 +577,7 @@ for i in range(200):
 start = datetime.now()
 try:
     os.makedirs("Back/hosts", exist_ok=True)
-    while datetime.now() < start + timedelta(seconds=60):
+    while datetime.now() < start + timedelta(seconds=240):
         v = updated.get()
         print("-----Saving {}, {} to go".format(v, updated.qsize()))
         os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
