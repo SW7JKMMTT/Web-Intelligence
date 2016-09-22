@@ -24,24 +24,37 @@ class EventClient(object):
     def __init__(self, events, i):
         self.events = events
         self.i = i
+        self.state = 0
 
     def starting(self):
-        self.events.put(StartingEvent(self.i))
+        if self.state != 1:
+            self.state = 1
+            self.events.put(StartingEvent(self.i))
 
     def retrieving(self):
-        self.events.put(RetrievingEvent(self.i))
+        if self.state != 2:
+            self.state = 2
+            self.events.put(RetrievingEvent(self.i))
 
     def parsing(self):
-        self.events.put(ParsingEvent(self.i))
+        if self.state != 3:
+            self.state = 3
+            self.events.put(ParsingEvent(self.i))
 
     def downloading(self):
-        self.events.put(DownloadingEvent(self.i))
+        if self.state != 4:
+            self.state = 4
+            self.events.put(DownloadingEvent(self.i))
 
     def extracting(self):
-        self.events.put(ExtractingEvent(self.i))
+        if self.state != 5:
+            self.state = 5
+            self.events.put(ExtractingEvent(self.i))
 
     def done(self):
-        self.events.put(DoneEvent(self.i))
+        if self.state != 6:
+            self.state = 6
+            self.events.put(DoneEvent(self.i))
 
     def processed(self):
         self.events.put(ProcessedEvent(self.i))

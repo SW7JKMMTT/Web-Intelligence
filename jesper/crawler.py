@@ -577,8 +577,8 @@ def arun(eclient):
 def real_run(eclient):
     # print("Starting {}".format(i))
     try:
-        # cProfile.runctx('arun()', globals(), locals(), filename="runner" + str(i) + ".stats")
-        arun(eclient)
+        cProfile.runctx('arun(eclient)', globals(), locals(), filename="runner" + str(i) + ".stats")
+        # arun(eclient)
     except AbortError as e:
         eclient.exception(e)
         pass
@@ -600,7 +600,7 @@ for i in range(200):
     t.start()
     crawlerThreads.append(t)
 
-for i in range(1):
+for i in range(2):
     t = multiprocessing.Process(target=writequeue)
     t.start()
     writerThreads.append(t)
