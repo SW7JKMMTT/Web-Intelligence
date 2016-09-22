@@ -142,7 +142,7 @@ class Host():
                 roburl = url.join("/robots.txt")
                 print("Getting robots file {}".format(roburl.geturl()))
                 r = requests.get(roburl.geturl(), allow_redirects=False, timeout=2)
-            except (requests.ConnectionError, requests.TooManyRedirects, requests.ReadTimeout):
+            except (requests.exceptions.ConnectionError, requests.exceptions.TooManyRedirects, requests.exceptions.ReadTimeout):
                 return None
             self.robots = robots.compileRobots(r.text)
         return self.robots
@@ -476,7 +476,7 @@ def load_url(q, url, host, timeout):
         for l in page.getLinks():
             q.discover(l)
         return page
-    except (requests.ReadTimeout, requests.ConnectionError, requests.TooManyRedirects):
+    except (requests.exceptions.ConnectionError, requests.exceptions.TooManyRedirects, requests.exceptions.ReadTimeout):
         print("Read timed out")
         return UnparsablePage(url)
     except PageTooLargeError as p:
