@@ -145,13 +145,22 @@ class RobotTree():
             newInst = []
         return maxPerm
 
+class DeepPartError(Exception):
+    def __init__(self, path):
+        self.path = path
 
 def _getParts(s):
+    s = re.sub(r'//+', r'/', s)
+    s = re.sub(r'\\\\+', r'\\', s)
     head, tail = os.path.split(s)
     parts = []
+    depth = 0
     while tail != "" or head != "/" and head != "":
         parts.append(tail)
         head, tail = os.path.split(head)
+        depth += 1
+        if depth >= 100:
+            raise DeepPartError(s)
     parts.reverse()
     return parts
 

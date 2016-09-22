@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import os
 import concurrent.futures
+import traceback
+import urwid
 import threading
 import multiprocessing
 from multiprocessing.managers import SyncManager
@@ -14,9 +16,23 @@ from datetime import datetime, timedelta
 import urllib.parse
 import queue
 import cProfile
+import event
 import heapq
 import pprint
+import magic
 from functools import singledispatch
+
+class PageTooLargeError(Exception):
+    def __init__(self, size = 0):
+        self.size = size
+
+class WrongTypeError(Exception):
+    def __init__(self, t):
+        self.type = t
+
+class AbortError(Exception):
+    pass
+
 
 class CantStoreTypeError(Exception):
     def __init__(self, t):
@@ -46,7 +62,7 @@ def save_datetime(obj):
 
 #This is really expensive
 @save.register(queue.Queue)
-def save_datetime(obj):
+def save_queue(obj):
     q = []
     while not obj.empty():
         i = obj.get_nowait()
@@ -106,7 +122,6 @@ class Url(object):
 def save_url(obj):
     return obj.geturl()
 
-
 class Host():
     def __init__(self, host, urls={}, o=[]):
         self.host = host
@@ -127,11 +142,8 @@ class Host():
     def hasWork(self):
         return not self.open.empty();
 
-    def putVisited(self, page):
-        self.urls[page.getPath()] = page
-
-    def getVisited(self, path):
-        return self.urls[path]
+    def putVisited(self, url):
+        self.urls[url.getPath()] = True
 
     def isVisited(self, url):
         return url.getPath() in self.urls.keys()
@@ -140,11 +152,19 @@ class Host():
         if self.robots == None:
             try:
                 roburl = url.join("/robots.txt")
-                print("Getting robots file {}".format(roburl.geturl()))
-                r = requests.get(roburl.geturl(), allow_redirects=False, timeout=2)
-            except (requests.exceptions.ConnectionError, requests.exceptions.TooManyRedirects, requests.exceptions.ReadTimeout):
+                # print("Getting robots file {}".format(roburl.geturl()))
+                content, size = downloadPage(url, 524288, {"text/plain", "text/html"}, 2)
+            except WrongTypeError as e:
+                # print(e.type)
                 return None
-            self.robots = robots.compileRobots(r.text)
+            except (PageTooLargeError, AbortError):
+                return None
+            except (requests.exceptions.ReadTimeout, requests.exceptions.SSLError, requests.exceptions.TooManyRedirects, requests.exceptions.ConnectionError):
+                return None
+            try:
+                self.robots = robots.compileRobots(content.decode())
+            except UnicodeDecodeError:
+                pass #I guess it wasn't unicode. Fuck it, i don't want to index them anyway
         return self.robots
 
     def __lt__(self, other):
@@ -251,20 +271,6 @@ def save_htmlpage(obj):
     this["visited"] = save(obj.visited)
     return this
 
-
-class FrontQueue(object):
-    def __init__(self):
-        self.q = queue.Queue()
-
-    def get(self):
-        return self.q.get()
-
-    def put(self, url):
-        return self.q.put(url)
-
-    def empty(self):
-        return self.q.empty()
-
 class MainQueue(object):
     def __init__(self):
         self.hostnames = {}
@@ -291,13 +297,11 @@ class MainQueue(object):
 
     def _putHost(self, bq):
         self.hosts.put(bq)
-        bq.isQueued = True
 
     def _getHost(self):
         if self.hosts.empty():
             return None
         host = self.hosts.get_nowait()
-        host.isQueued = False
         return host
 
     def _fillbq(self):
@@ -355,11 +359,11 @@ class ClientQueue(object):
         return host
 
     def _takeHost(self):
-        print("----Taking from main----")
+        # print("----Taking from main----")
         newHost = self.mq.getNext(self.cid)
         if newHost == None:
             return
-        print("New Host is: ", newHost)
+        # print("New Host is: ", newHost)
         self.myhosts[newHost.host] = newHost
         return newHost
 
@@ -384,7 +388,7 @@ class ClientQueue(object):
             self._fillbq()
 
         host = self._getHeap()
-        print(host)
+        # print(host)
         if host == None:
             return None
 
@@ -397,27 +401,12 @@ class ClientQueue(object):
         else:
             self._fillbq()
 
-@save.register(MainQueue)
-def save_bq(obj):
-    this = {}
-    this["hosts"] = {}
-    for k, v in obj.bqs.items():
-        this["hosts"][k] = save(v)
-    return this
-
-class PageTooLargeError(Exception):
-    def __init__(self, size = 0):
-        self.size = size
-
-class WrongTypeError(Exception):
-    pass
-
 MAX_PAGE_SIZE=20971520/2
 def downloadPage(url, maxSize, allowedTypes, timeout):
     with requests.Session() as s:
         r = s.get(url.geturl(), timeout=timeout, stream=True)
         if "content-length" in r.headers and int(r.headers["content-length"]) >= maxSize:
-            print("Headers reported the content to be {} bytes long".format(r.headers["content-length"]))
+            # print("Headers reported the content to be {} bytes long".format(r.headers["content-length"]))
             raise PageTooLargeError(int(r.headers["content-length"]))
 
         if "content-type" in r.headers and r.headers["content-type"] in allowedTypes:
@@ -425,21 +414,27 @@ def downloadPage(url, maxSize, allowedTypes, timeout):
                 if r.headers["content-type"] == t or r.headers["content-type"].find(t):
                     break
             else:
-                print("Headers reported the content to be of type {}".format(r.headers["content-type"]))
-                raise WrongTypeError()
+                # print("Headers reported the content to be of type {}".format(r.headers["content-type"]))
+                raise WrongTypeError(t)
 
         pageSize = 0
         data = bytes()
         for chunk in r.iter_content(chunk_size=8192, decode_unicode=False):
+            if not running.value:
+                raise AbortError()
             pageSize += len(chunk)
             data += chunk
+            guessedType = magic.from_buffer(data, mime=True)
+            if guessedType not in allowedTypes:
+                # print("Wrong Type")
+                raise WrongTypeError(guessedType)
             if pageSize > maxSize:
-                print("Page was too long to be indexed")
+                # print("Page was too long to be indexed")
                 raise PageTooLargeError()
         return data, pageSize
 
 only_a_tags = bs4.SoupStrainer("a")
-def getPage(url, data, size):
+def parsePage(url, data, size):
     bs = bs4.BeautifulSoup(data, "html.parser", parse_only=only_a_tags)
     links = []
     for link in bs.find_all("a"):
@@ -462,27 +457,30 @@ def getPage(url, data, size):
     return HTMLPage(url, data, len(data), links)
 
 # Retrieve a single page and report the URL and contents
-def load_url(q, url, host, timeout):
+def load_url(events, queue, url, host, timeout):
     if host.isVisited(url):
-        print("Already visited")
+        # print("Already visited")
         return None
     rob = host.getRobots(url)
     if rob != None and not rob.isAllowed(url.getPath()):
         return UnparsablePage(url)
-    print("Downloading {}".format(url.geturl()))
+    # print("Downloading {}".format(url.geturl()))
     try:
-        content, size = downloadPage(url, MAX_PAGE_SIZE, ["text/html"], timeout)
-        page = getPage(url, content, size)
-        for l in page.getLinks():
-            q.discover(l)
-        return page
+        events.downloading()
+        content, size = downloadPage(url, MAX_PAGE_SIZE, {"text/html"}, timeout)
     except (requests.exceptions.ConnectionError, requests.exceptions.TooManyRedirects, requests.exceptions.ReadTimeout):
-        print("Read timed out")
+        # print("Read timed out")
         return UnparsablePage(url)
     except PageTooLargeError as p:
         return LargePage(url, p.size)
     except WrongTypeError as e:
         return UnparsablePage(url)
+    events.parsing()
+    page = parsePage(url, content, size)
+    events.extracting()
+    for l in page.getLinks():
+        queue.discover(l)
+    return page
 
 SEEDURLS = [
         'https://pornhub.com',
@@ -503,7 +501,8 @@ def pathJoin(path, new):
 
 @singledispatch
 def todisk(obj, path):
-    print("You can't save {}".format(type(obj)))
+    # print("You can't save {}".format(type(obj)))
+    pass
 
 @todisk.register(str)
 def todisk_str(obj, path):
@@ -545,59 +544,127 @@ m = Manager()
 #updated = m.up()
 updated = Queue()
 sel = m.bq()
+events = event.EventQueue()
 
 sel.discover([Url(url) for url in SEEDURLS])
 
-def arun():
-    cq = ClientQueue(sel)
-    while running.value:
-        h = cq.getNext()
-        if h == None:
-            continue
-        assert(h.hasWork())
-        w = h.getWork()
-        page = load_url(cq, w, h, 2)
-        if page != None:
-            h.putVisited(page)
-            updated.put(page)
-        cq.done(h)
+def arun(eclient):
+    try:
+        eclient.starting()
+        cq = ClientQueue(sel)
+        while running.value:
+            eclient.retrieving()
+            h = cq.getNext()
+            if h == None:
+                continue
+            assert(h.hasWork())
+            w = h.getWork()
+            page = load_url(eclient, cq, w, h, 2)
+            if page != None:
+                h.putVisited(w)
+                updated.put(page)
+                eclient.processed()
+            cq.done(h)
+        eclient.done()
+    except AbortError:
+        eclient.done()
+    except Exception as e:
+        eclient.exception(e)
+        with open("error.log", "a") as f:
+            traceback.print_exc(file=f)
 
-def real_run(i):
-    print("Starting {}".format(i))
-    # cProfile.runctx('arun()', globals(), locals(), filename="runner" + str(i) + ".stats")
-    arun()
-    return 0
 
-th = []
-for i in range(150):
-    t = multiprocessing.Process(target=real_run, args=[i])
-    t.start()
-    th.append(t)
+def real_run(eclient):
+    # print("Starting {}".format(i))
+    try:
+        # cProfile.runctx('arun()', globals(), locals(), filename="runner" + str(i) + ".stats")
+        arun(eclient)
+    except AbortError as e:
+        eclient.exception(e)
+        pass
 
-start = datetime.now()
-try:
+def writequeue():
     os.makedirs("Back/hosts", exist_ok=True)
-    while datetime.now() < start + timedelta(seconds=240):
+    while updated.qsize() > 0 or running.value:
         v = updated.get()
-        print("-----Saving {}, {} to go".format(v, updated.qsize()))
+        # print("-----Saving {}, {} to go".format(v, updated.qsize()))
         os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
-        host = sel.getHostQueue(v.url.getHost())
         todisk(save(v), "Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"))
-        v.content = ""
+
+
+crawlerThreads = []
+writerThreads = []
+for i in range(200):
+    eclient = events.connect()
+    t = multiprocessing.Process(target=real_run, args=[eclient])
+    t.start()
+    crawlerThreads.append(t)
+
+for i in range(1):
+    t = multiprocessing.Process(target=writequeue)
+    t.start()
+    writerThreads.append(t)
+
+def exit_on_q(key):
+    if key in ('q', 'Q'):
+        raise urwid.ExitMainLoop()
+    elif key in ("s", "S"):
+        running.value = False
+
+processedPages = 0
+def crawlEvent():
+    global processedPages
+    while events.hasEvents():
+        e = events.get()
+        if e.getEventType() == event.EventType.status:
+            crawlers[e.i].set_text(e.getText())
+            if e.getText() == "Done": #TODO: Not string compar
+                crawler_wrap[e.i].set_attr_map({None: "crawlerdonebg"})
+            else:
+                crawler_wrap[e.i].set_attr_map({None: "crawlerbg"})
+        if e.getEventType() == event.EventType.processed:
+            processedPages += 1
+            bottom_items[0].set_text("Processed: {}".format(processedPages))
+
+            #This also means an update to the work queue
+            bottom_items[1].set_text("Pending Write: {}".format(updated.qsize()))
+
+        if e.getEventType() == event.EventType.error:
+            crawlers[e.i].set_text("DEAD")
+            crawler_wrap[e.i].set_attr_map({None: "crawlerdeadbg"})
+try:
+
+    palette = [
+        ('crawlerbg',     'black', 'light gray'),
+        ('crawlerdonebg', 'black', 'light blue'),
+        ('crawlerdeadbg', 'black', 'light red'),
+        ('crawlerAreabg', 'black', 'dark gray'),
+        ('statusbar',     'black', 'dark gray'),
+        ('bg',            'black', 'black'),]
+
+    crawlers = [urwid.Text("Idle", align="center") for crawl in crawlerThreads]
+    crawler_wrap = [urwid.AttrMap(urwid.Padding(crawl, width=20), "crawlerbg") for crawl in crawlers]
+    crawler_area = urwid.AttrMap(urwid.Padding(urwid.GridFlow(crawler_wrap, 20, 3, 1, 'center'), left=4, right=3, min_width=15), 'crawlerAreabg')
+
+    bottom_items = [urwid.Text("Starting"), urwid.Text("Starting")]
+    bottom_col = urwid.AttrMap(urwid.Columns(bottom_items, 2), "statusbar")
+
+    fill = urwid.Frame(urwid.Filler(crawler_area), footer=bottom_col)
+    map2 = urwid.AttrMap(fill, 'bg')
+    loop = urwid.MainLoop(map2, palette, unhandled_input=exit_on_q)
+    loop.watch_file(events.getfd(), crawlEvent)
+    loop.run()
+    # time.sleep(timedelta(seconds=30).seconds)
 except KeyboardInterrupt:
     print("Stopping")
-print("--------------------------- [2 secs WARNING] -----------------------")
 running.value = False
-time.sleep(200)
-while not updated.empty():
-    print("---PREGET SIZE: {}".format(updated.qsize()))
-    v = updated.get()
-    print("-----Saving {}, {} to go".format(v, updated.qsize()))
-    os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
-    host = sel.getHostQueue(v.url.getHost())
-    todisk(save(v), "Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"))
-    print("SAVED")
-for k, thread in enumerate(th):
-    print("Joined {}".format(k))
+
+#Since We stop the writing threads at the same time as the crawler threads we need to discard the last pages the crawler threads might produce
+while updated.qsize() > 0:
+    updated.get()
+
+for k, thread in enumerate(crawlerThreads):
+    thread.join()
+for k, thread in enumerate(writerThreads):
     thread.join()
 exit(0)
