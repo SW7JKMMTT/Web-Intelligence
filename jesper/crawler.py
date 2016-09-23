@@ -611,6 +611,7 @@ def exit_on_q(key):
     elif key in ("s", "S"):
         running.value = False
 
+startTime = datetime.now()
 processedPages = 0
 def crawlEvent():
     global processedPages
@@ -626,8 +627,15 @@ def crawlEvent():
             processedPages += 1
             bottom_items[0].set_text("Processed: {}".format(processedPages))
 
+            diff = (datetime.now() - startTime).seconds
+            if diff is not 0:
+                avg = processedPages / diff
+                bottom_items[1].set_text("{:.2f} processed/s".format(avg))
+            else:
+                bottom_items[1].set_text("Waiting ...")
+
             #This also means an update to the work queue
-            bottom_items[1].set_text("Pending Write: {}".format(updated.qsize()))
+            bottom_items[2].set_text("Pending Write: {}".format(updated.qsize()))
 
         if e.getEventType() == event.EventType.error:
             crawlers[e.i].set_text("DEAD")
@@ -646,8 +654,8 @@ try:
     crawler_wrap = [urwid.AttrMap(urwid.Padding(crawl, width=20), "crawlerbg") for crawl in crawlers]
     crawler_area = urwid.AttrMap(urwid.Padding(urwid.GridFlow(crawler_wrap, 20, 3, 1, 'center'), left=4, right=3, min_width=15), 'crawlerAreabg')
 
-    bottom_items = [urwid.Text("Starting"), urwid.Text("Starting")]
-    bottom_col = urwid.AttrMap(urwid.Columns(bottom_items, 2), "statusbar")
+    bottom_items = [urwid.Text("Starting"), urwid.Text("Starting"), urwid.Text("Starting")]
+    bottom_col = urwid.AttrMap(urwid.Columns(bottom_items, 3), "statusbar")
 
     fill = urwid.Frame(urwid.Filler(crawler_area), footer=bottom_col)
     map2 = urwid.AttrMap(fill, 'bg')
