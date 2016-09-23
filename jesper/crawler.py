@@ -652,7 +652,7 @@ try:
 
     crawlers = [urwid.Text("Idle", align="center") for crawl in crawlerThreads]
     crawler_wrap = [urwid.AttrMap(urwid.Padding(crawl, width=20), "crawlerbg") for crawl in crawlers]
-    crawler_area = urwid.AttrMap(urwid.Padding(urwid.GridFlow(crawler_wrap, 20, 3, 1, 'center'), left=4, right=3, min_width=15), 'crawlerAreabg')
+    crawler_area = urwid.AttrMap(urwid.LineBox(urwid.Padding(urwid.GridFlow(crawler_wrap, 20, 3, 1, 'center'), left=4, right=3, min_width=15), title="Crawlers"), 'crawlerAreabg')
 
     bottom_items = [urwid.Text("Starting"), urwid.Text("Starting"), urwid.Text("Starting")]
     bottom_col = urwid.AttrMap(urwid.Columns(bottom_items, 3), "statusbar")
@@ -668,7 +668,7 @@ except KeyboardInterrupt:
 running.value = False
 
 #Since We stop the writing threads at the same time as the crawler threads we need to discard the last pages the crawler threads might produce
-while updated.qsize() > 0:
+while any([thread.is_alive() for thread in crawlerThreads]):
     updated.get()
 
 for k, thread in enumerate(crawlerThreads):
