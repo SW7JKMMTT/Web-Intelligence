@@ -611,10 +611,45 @@ def exit_on_q(key):
     elif key in ("s", "S"):
         running.value = False
 
+class SpacedBarGraph(urwid.BarGraph):
+    def calculate_bar_widths(self, size, bardata):
+        """
+        Return a list of bar widths, one for each bar in data.
+
+        If self.bar_width is None this implementation will stretch
+        the bars across the available space specified by maxcol.
+        """
+        (maxcol, maxrow) = size
+
+        if self.bar_width is not None:
+            return [self.bar_width] * min(
+                len(bardata), maxcol / self.bar_width)
+
+        if len(bardata) >= maxcol:
+            return [1] * maxcol
+
+        widths = []
+        remain = len(bardata)
+        grow = maxcol # - (remain - 1)
+        for row in bardata:
+            w = int(float(grow) / remain + 0.5)
+            widths.append(w)
+            grow -= w
+            remain -= 1
+        return widths
+
+GOAL = 100
+BARCOLS = 25
 startTime = datetime.now()
+lastGraphTime = datetime.now()
+lastGraphData = 0
+graphDataList = [[0] for i in range(BARCOLS)]
 processedPages = 0
 def crawlEvent():
     global processedPages
+    global lastGraphTime
+    global lastGraphData
+    global graphDataList
     while events.hasEvents():
         e = events.get()
         if e.getEventType() == event.EventType.status:
@@ -637,9 +672,22 @@ def crawlEvent():
             #This also means an update to the work queue
             bottom_items[2].set_text("Pending Write: {}".format(updated.qsize()))
 
+            if (datetime.now() - lastGraphTime).seconds > 0.5:
+                diff = processedPages - lastGraphData
+                lastGraphData = processedPages
+                timediff = datetime.now() - lastGraphTime
+                miliseconds = timediff.seconds * 1000 + timediff.microseconds / 1000
+                graphDataList.append([(diff / miliseconds) * 1000.0])
+                if len(graphDataList) >= BARCOLS:
+                    graphDataList = graphDataList[-BARCOLS:]
+                lastGraphTime = datetime.now()
+                bar_chart.set_data(graphDataList, GOAL + 20, [GOAL])
+
         if e.getEventType() == event.EventType.error:
             crawlers[e.i].set_text("DEAD")
             crawler_wrap[e.i].set_attr_map({None: "crawlerdeadbg"})
+
+
 try:
 
     palette = [
@@ -648,16 +696,22 @@ try:
         ('crawlerdeadbg', 'black', 'light red'),
         ('crawlerAreabg', 'black', 'dark gray'),
         ('statusbar',     'black', 'dark gray'),
+        ('graphbars',     'black', 'light gray'),
+        ('graphbg',       'black', 'black'),
         ('bg',            'black', 'black'),]
 
     crawlers = [urwid.Text("Idle", align="center") for crawl in crawlerThreads]
     crawler_wrap = [urwid.AttrMap(urwid.Padding(crawl, width=20), "crawlerbg") for crawl in crawlers]
     crawler_area = urwid.AttrMap(urwid.LineBox(urwid.Padding(urwid.GridFlow(crawler_wrap, 20, 3, 1, 'center'), left=4, right=3, min_width=15), title="Crawlers"), 'crawlerAreabg')
 
+    bar_chart = SpacedBarGraph(['graphbg', 'graphbars'], hatt=['graphbars', 'graphbars'])
+
+    bar_chart_box = urwid.AttrMap(urwid.LineBox(urwid.BoxAdapter(bar_chart, 30), title="PERFORMANCE"), "statusbar")
+
     bottom_items = [urwid.Text("Starting"), urwid.Text("Starting"), urwid.Text("Starting")]
     bottom_col = urwid.AttrMap(urwid.Columns(bottom_items, 3), "statusbar")
 
-    fill = urwid.Frame(urwid.Filler(crawler_area), footer=bottom_col)
+    fill = urwid.Frame(urwid.Frame(urwid.Filler(crawler_area), footer=bar_chart_box), footer=bottom_col)
     map2 = urwid.AttrMap(fill, 'bg')
     loop = urwid.MainLoop(map2, palette, unhandled_input=exit_on_q)
     loop.watch_file(events.getfd(), crawlEvent)
