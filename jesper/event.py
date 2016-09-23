@@ -59,8 +59,8 @@ class EventClient(object):
     def processed(self):
         self.events.put(ProcessedEvent(self.i))
 
-    def exception(self, e):
-        self.events.put(ExceptionEvent(self.i, e))
+    def exception(self):
+        self.events.put(ExceptionEvent(self.i))
 
 class Event(object):
     def __init__(self, i):
@@ -134,9 +134,8 @@ class ProcessedEvent(Event):
         return EventType.processed
 
 class ExceptionEvent(Event):
-    def __init__(self, i, e):
+    def __init__(self, i):
         super().__init__(i)
-        self.e = e
 
     def getEventType(self):
         return EventType.error

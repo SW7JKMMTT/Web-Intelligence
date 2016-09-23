@@ -9,12 +9,13 @@ from multiprocessing.managers import SyncManager
 from multiprocessing import Queue
 import time
 import requests
-import bs4
 import robots
 from url_normalize import url_normalize
 from datetime import datetime, timedelta
 import urllib.parse
+import urlspeed
 import queue
+import lxml.html
 import cProfile
 import event
 import heapq
@@ -107,7 +108,7 @@ class Url(object):
         return self.url.path
 
     def join(self, pa):
-        return Url(urllib.parse.urljoin(self.url.geturl(), pa))
+        return Url(urlspeed.urljoin(self.url, pa))
 
     def getProtocol(self):
         return self.url.scheme
@@ -406,7 +407,6 @@ def downloadPage(url, maxSize, allowedTypes, timeout):
     with requests.Session() as s:
         r = s.get(url.geturl(), timeout=timeout, stream=True)
         if "content-length" in r.headers and int(r.headers["content-length"]) >= maxSize:
-            # print("Headers reported the content to be {} bytes long".format(r.headers["content-length"]))
             raise PageTooLargeError(int(r.headers["content-length"]))
 
         if "content-type" in r.headers and r.headers["content-type"] in allowedTypes:
@@ -414,33 +414,36 @@ def downloadPage(url, maxSize, allowedTypes, timeout):
                 if r.headers["content-type"] == t or r.headers["content-type"].find(t):
                     break
             else:
-                # print("Headers reported the content to be of type {}".format(r.headers["content-type"]))
                 raise WrongTypeError(t)
 
         pageSize = 0
         data = bytes()
-        for chunk in r.iter_content(chunk_size=8192, decode_unicode=False):
+        first = True
+        for chunk in r.iter_content(chunk_size=4096, decode_unicode=False):
             if not running.value:
                 raise AbortError()
+
             pageSize += len(chunk)
             data += chunk
-            guessedType = magic.from_buffer(data, mime=True)
-            if guessedType not in allowedTypes:
-                # print("Wrong Type")
-                raise WrongTypeError(guessedType)
+
+            if first:
+                first = False
+                guessedType = magic.from_buffer(data, mime=True)
+                if guessedType not in allowedTypes:
+                    raise WrongTypeError(guessedType)
+
             if pageSize > maxSize:
-                # print("Page was too long to be indexed")
                 raise PageTooLargeError()
+
         return data, pageSize
 
-only_a_tags = bs4.SoupStrainer("a")
 def parsePage(url, data, size):
-    bs = bs4.BeautifulSoup(data, "html.parser", parse_only=only_a_tags)
+    root = lxml.html.fromstring(data)
     links = []
-    for link in bs.find_all("a"):
-        if not "href" in link.attrs:
+    for link in root.xpath("//a[@href]"):
+        loc = link.get("href").strip(" ")
+        if loc == None:
             continue
-        loc = link.attrs["href"].strip(" ")
         if loc == "":
             continue
         elif loc.startswith("mailto:"): #Fucking mail links
@@ -459,12 +462,10 @@ def parsePage(url, data, size):
 # Retrieve a single page and report the URL and contents
 def load_url(events, queue, url, host, timeout):
     if host.isVisited(url):
-        # print("Already visited")
         return None
     rob = host.getRobots(url)
     if rob != None and not rob.isAllowed(url.getPath()):
         return UnparsablePage(url)
-    # print("Downloading {}".format(url.geturl()))
     try:
         events.downloading()
         content, size = downloadPage(url, MAX_PAGE_SIZE, {"text/html"}, timeout)
@@ -569,7 +570,7 @@ def arun(eclient):
     except AbortError:
         eclient.done()
     except Exception as e:
-        eclient.exception(e)
+        eclient.exception()
         with open("error.log", "a") as f:
             traceback.print_exc(file=f)
 
@@ -577,24 +578,23 @@ def arun(eclient):
 def real_run(eclient):
     # print("Starting {}".format(i))
     try:
-        cProfile.runctx('arun(eclient)', globals(), locals(), filename="runner" + str(i) + ".stats")
-        # arun(eclient)
+        # cProfile.runctx('arun(eclient)', globals(), locals(), filename="runner" + str(i) + ".stats")
+        arun(eclient)
     except AbortError as e:
-        eclient.exception(e)
+        eclient.exception()
         pass
 
 def writequeue():
     os.makedirs("Back/hosts", exist_ok=True)
     while updated.qsize() > 0 or running.value:
         v = updated.get()
-        # print("-----Saving {}, {} to go".format(v, updated.qsize()))
         os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
         todisk(save(v), "Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"))
 
 
 crawlerThreads = []
 writerThreads = []
-for i in range(200):
+for i in range(20):
     eclient = events.connect()
     t = multiprocessing.Process(target=real_run, args=[eclient])
     t.start()
