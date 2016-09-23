@@ -1,14 +1,23 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography.X509Certificates;
+using System.Threading;
 using System.Threading.Tasks;
+using Nito.AsyncEx;
 
 namespace miniproject1.DataStructures
 {
     [Serializable]
     public class Host : IComparable<Host>
     {
+        private static readonly ConcurrentDictionary<string, Host> Hosts = new ConcurrentDictionary<string, Host>();
+
+        [NonSerialized]
+        private volatile Mutex _hostMutex = new Mutex();
+
         public Uri Hosturl;
 
         public Robots Robots;
@@ -32,6 +41,7 @@ namespace miniproject1.DataStructures
 
         public void WaitForRobots(HttpClient httpClient)
         {
+            _hostMutex.WaitOne();
             if (RobotstextTask != null && RobotstextTask.IsCompleted)
                 return;
 
@@ -47,20 +57,28 @@ namespace miniproject1.DataStructures
             }
 
             Robots = RobotstextTask.Status != TaskStatus.RanToCompletion ? new Robots() : new Robots(RobotstextTask.Result, this);
+            _hostMutex.ReleaseMutex();
         }
 
-        public static Host GetOrCreate(Uri url, List<Host> hosts)
+        public static Host GetOrCreate(Uri url)
         {
-            var host = hosts.FirstOrDefault(x => x.Hosturl.Host == url.Host);
-            if (host == null)
+            //var host = hosts.FirstOrDefault(x => x.Hosturl.Host == url.Host);
+            //var host = hosts[url.Host];
+            Host host;
+            if (!Hosts.TryGetValue(url.Host, out host))
             {
                 var hosturi = new Uri(url.Scheme + "://" + url.Host);
                 host = new Host(hosturi);
-                hosts.Add(host);
-                host.Id = hosts.Count;
+                Hosts[url.Host] = host;
+                host.Id = Hosts.Count;
             }
 
             return host;
+        }
+
+        public static int Count()
+        {
+            return Hosts.Count;
         }
 
         public int CompareTo(Host other)
@@ -72,6 +90,22 @@ namespace miniproject1.DataStructures
         {
             return DateTime.Now > LastVisited + CrawlDelay;
         }
+
+        public void GetMutex()
+        {
+            _hostMutex.WaitOne();
+        }
+
+        public void ReleaseMutex()
+        {
+            _hostMutex.ReleaseMutex();
+        }
+
+        public void CreateMutex()
+        {
+            _hostMutex = new Mutex();
+        }
+
 
 
     }

@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Runtime.Serialization;
+using System.Threading;
 using miniproject1.DataStructures;
 using miniproject1.Indexer;
+using NUglify.Helpers;
 
 namespace miniproject1.Persistence
 {
@@ -16,17 +18,34 @@ namespace miniproject1.Persistence
 
             Stream crawlerStream = new FileStream("crawler.bin", FileMode.OpenOrCreate, FileAccess.Read, FileShare.None);
 
-            if (crawlerStream.Length != 0)
+            if (crawlerStream.Length > 100)
             {
-                var crawler = (Crawler.Crawler)crawlerSerialser.ReadObject(crawlerStream);
-                crawlerStream.Close();
+                Crawler.Crawler crawler;
+                try
+                {
+                    crawler = (Crawler.Crawler)crawlerSerialser.ReadObject(crawlerStream);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex);
+                    crawlerStream.Close();
+                    return new Crawler.Crawler(seedUris, hosts, httpClient, limit);
+                }
                 crawler.HttpClient = httpClient;
                 crawler.StartedWith = crawler.SitesVisited.Count;
                 crawler.Limit = limit;
-                Console.WriteLine("Restore crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, crawler.Hosts.Count, crawler.BackQueue.GetBackQueueCount());
+                crawler.BackQueue.DequeueMutex = new Mutex();
+                crawler.BackQueue.EnqueueMutex = new Mutex();
+                crawler.BackQueue.cntMutex = new Mutex();
+                var now = DateTime.Now - TimeSpan.FromSeconds(1);
+                crawler.BackQueue.BackQueueMap.ForEach(x => x.Key.LastVisited = now);
+                crawler.BackQueue.BackQueueMap.ForEach(x => x.Key.CreateMutex());
+                Console.WriteLine("Restore crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, Host.Count(), crawler.BackQueue.GetBackQueueCount());
+                crawlerStream.Close();
                 return crawler;
             }
 
+            crawlerStream.Close();
             return new Crawler.Crawler(seedUris, hosts, httpClient, limit);
         }
 
@@ -37,7 +56,7 @@ namespace miniproject1.Persistence
 
             crawlerSerialser.WriteObject(crawlerStream, crawler);
             crawlerStream.Close();
-            Console.WriteLine("Saved crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, crawler.Hosts.Count, crawler.BackQueue.GetBackQueueCount());
+            Console.WriteLine("Saved crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, Host.Count(), crawler.BackQueue.GetBackQueueCount());
         }
 
         public static Index RestoreIndex()
@@ -53,6 +72,7 @@ namespace miniproject1.Persistence
                 return indexer;
             }
 
+            indexStream.Close();
             return new Index();
         }
 

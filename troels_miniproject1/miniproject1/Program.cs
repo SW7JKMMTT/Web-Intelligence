@@ -36,8 +36,16 @@ namespace miniproject1
             var httpClient = new HttpClient(httpClientHandler) { Timeout = new TimeSpan(0, 0, 5) };
             httpClient.DefaultRequestHeaders.Add("user-agent", "Mozilla/5.0 SataiCrawler");
 
-            var seedUrl = new List<Uri> { new Uri("http://dr.dk") };
-            var crawler = SerializationHelper.RestoreCrawler(seedUrl, new List<Host>(), httpClient, 100);
+            var seedUrl = new List<Uri>
+            {
+                new Uri("http://dr.dk"),
+                new Uri("https://en.wikipedia.org"),
+                new Uri("https://news.ycombinator.com"),
+                new Uri("http://www.mmo-champion.com"),
+                new Uri("http://www.imdb.com")
+            };
+
+            var crawler = SerializationHelper.RestoreCrawler(seedUrl, new List<Host>(), httpClient, 4000);
 
             Console.CancelKeyPress += delegate
             {

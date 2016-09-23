@@ -1,6 +1,8 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using miniproject1.DataStructures;
 
 namespace miniproject1.Crawler
@@ -10,13 +12,28 @@ namespace miniproject1.Crawler
     {
         public readonly SortedDictionary<Host, Queue<Uri>> BackQueueMap;
 
+        public ConcurrentDictionary<Uri, bool> SitesSeen = new ConcurrentDictionary<Uri, bool>();
+
+        [NonSerialized]
+        public Mutex DequeueMutex = new Mutex();
+
+        [NonSerialized]
+        public Mutex EnqueueMutex = new Mutex();
+
+        [NonSerialized] 
+        public Mutex cntMutex = new Mutex();
+
+        private int BackQueueSize;
+
         public BackQueue()
         {
+            BackQueueSize = 0;
             BackQueueMap = new SortedDictionary<Host, Queue<Uri>>();
         }
 
         public bool AddToQueue(Host host, Uri uri)
         {
+            EnqueueMutex.WaitOne();
             var containsKey = BackQueueMap.ContainsKey(host);
 
             if (!containsKey)
@@ -28,15 +45,32 @@ namespace miniproject1.Crawler
             }
 
             // This call is _HOT_, might replace with something else? A HashMap/dict perhaps. 
-            if (BackQueueMap[host].Contains(uri))
-                return false;
+            //if (BackQueueMap[host].Contains(uri))
+            //{
+            //    EnqueueMutex.ReleaseMutex();
+            //    return false;
+            //}
 
+            if (SitesSeen.ContainsKey(uri))
+            {
+                EnqueueMutex.ReleaseMutex();
+                return false;
+            }
+            
+            SitesSeen.TryAdd(uri, true);
+            
             BackQueueMap[host].Enqueue(uri);
+            EnqueueMutex.ReleaseMutex();
+
+            cntMutex.WaitOne();
+            BackQueueSize += 1;
+            cntMutex.ReleaseMutex();
             return true;
         }
 
         public Uri GetSite()
         {
+            DequeueMutex.WaitOne();
             var candidate = BackQueueMap.Where(x => x.Key.IsReady() && x.Value.Count > 0);
 
             if (candidate.FirstOrDefault().Value == null)
@@ -44,12 +78,25 @@ namespace miniproject1.Crawler
                 return BackQueueMap.FirstOrDefault(x => x.Value.Count > 0).Value.Dequeue();
             }
 
-            return candidate.FirstOrDefault().Value.Dequeue();
+            var ret = candidate.FirstOrDefault().Value.Dequeue();
+            
+            DequeueMutex.ReleaseMutex();
+
+            cntMutex.WaitOne();
+            if(BackQueueSize > 0)
+                BackQueueSize -= 1;
+            cntMutex.ReleaseMutex();
+
+            return ret;
+
         }
 
         public int GetBackQueueCount()
         {
-            return BackQueueMap.Sum(x => x.Value.Count);
+            cntMutex.WaitOne();
+            var res = BackQueueSize;
+            cntMutex.ReleaseMutex();
+            return res;
         }
     }
 }
