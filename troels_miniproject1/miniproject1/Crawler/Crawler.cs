@@ -3,10 +3,11 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
-using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
+using HtmlAgilityPack;
 using miniproject1.DataStructures;
 using NUglify.Helpers;
 
@@ -15,10 +16,9 @@ namespace miniproject1.Crawler
     [Serializable]
     public class Crawler
     {
-        public BackQueue BackQueue;
+        public ConcurrentDictionary<string, Host> Hosts = new ConcurrentDictionary<string, Host>();
 
-        [NonSerialized]
-        public HttpClient HttpClient;
+        public BackQueue BackQueue;
 
         public ConcurrentDictionary<Uri, Site> SitesVisited = new ConcurrentDictionary<Uri, Site>();
 
@@ -28,29 +28,26 @@ namespace miniproject1.Crawler
 
         public int QueueMaxSize = 10000;
 
-        public Crawler(IEnumerable<Uri> url, IEnumerable<Host> hosts, HttpClient httpClient, int limit)
+        public Crawler(IEnumerable<Uri> url, IEnumerable<Host> initialHosts, int limit)
         {
-            hosts.ForEach(x => Host.GetOrCreate(x.Hosturl));
-
-            HttpClient = httpClient;
+            initialHosts.ForEach(x => Host.GetOrCreate(x.Hosturl, Hosts));
 
             if (BackQueue == null)
                 BackQueue = new BackQueue();
 
             foreach (var u in url)
             {
-                var host = Host.GetOrCreate(u);
+                var host = Host.GetOrCreate(u, Hosts);
                 BackQueue.AddToQueue(host, u);
             }
 
             Limit = limit;
-
         }
 
         public async Task<Site> GetFromQueue()
         {
             var uri = BackQueue.GetSite();
-            var currentHost = Host.GetOrCreate(uri);
+            var currentHost = Host.GetOrCreate(uri, Hosts);
             currentHost.GetMutex();
             var sw = new Stopwatch();
             sw.Start();
@@ -68,12 +65,14 @@ namespace miniproject1.Crawler
                 Thread.Sleep(earliestNextVisit - DateTime.Now);
             }
 
-            currentHost.WaitForRobots(HttpClient);
+            var client = GetDownloader();
+
+            currentHost.WaitForRobots(client);
             var t1 = sw.ElapsedMilliseconds;
             Task<string> contentTask = null;
             try
             {
-                contentTask = HttpClient.GetStringAsync(uri);
+                contentTask = client.GetStringAsync(uri);
                 contentTask.Wait();
             }
             catch (AggregateException)
@@ -98,7 +97,7 @@ namespace miniproject1.Crawler
 
             currentHost.ReleaseMutex();
 
-            if (string.IsNullOrEmpty(content))
+            if (String.IsNullOrEmpty(content))
                 return null;
 
             var t2 = sw.ElapsedMilliseconds;
@@ -122,7 +121,7 @@ namespace miniproject1.Crawler
             IEnumerable<string> urls = null;
             try
             {
-                var doc = new HtmlAgilityPack.HtmlDocument();
+                var doc = new HtmlDocument();
                 doc.LoadHtml(site.Content);
 
                 urls =
@@ -172,7 +171,7 @@ namespace miniproject1.Crawler
                 if (SitesVisited.ContainsKey(candidateUri))
                     continue;
 
-                var chost = Host.GetOrCreate(candidateUri);
+                var chost = Host.GetOrCreate(candidateUri, Hosts);
 
                 if (chost.Robots.IsAllowed(candiate))
                 {
@@ -204,14 +203,26 @@ namespace miniproject1.Crawler
             await Task.Run(() => AddNewUrlsToQueue(site));
         }
 
+        public async Task StartRunner(int i)
+        {
+            while (BackQueue.GetBackQueueCount() > 0 && SitesVisited.Count < Limit && Hosts.Count >= i)
+            {
+                Console.WriteLine(i + " started");
+                await CrawlTask();
+                Console.WriteLine(i + " ended");
+            }
+        }
+
         public async void Run()
         {
-            int threads = 16;
+            int threads = 4;
             Task.Run(() => PrintStatus());
             while (BackQueue.GetBackQueueCount() > 0 && SitesVisited.Count < Limit)
             {
-                Task.WhenAll(Enumerable.Range(SitesVisited.Count, SitesVisited.Count + threads).Select(i => CrawlTask())).GetAwaiter().GetResult();
+                Console.WriteLine("Starting new tasks!");
+                Task.WhenAll(Enumerable.Range(SitesVisited.Count, SitesVisited.Count + Math.Min(threads, Hosts.Count)).Select(i => CrawlTask())).GetAwaiter().GetResult();
             }
+
         }
 
         public async void PrintStatus()
@@ -223,6 +234,22 @@ namespace miniproject1.Crawler
                 sw.Elapsed.TotalSeconds, (SitesVisited.Count - StartedWith)/sw.Elapsed.TotalSeconds);
                 Thread.Sleep(1000);
             }
+        }
+
+        public HttpClient GetDownloader()
+        {
+            var httpClientHandler = new HttpClientHandler()
+            {
+                AllowAutoRedirect = true,
+                MaxAutomaticRedirections = 100,
+                CookieContainer = new CookieContainer()
+            };
+
+            var httpClient = new HttpClient(httpClientHandler) { Timeout = new TimeSpan(0, 0, 1) };
+            httpClient.DefaultRequestHeaders.Add("user-agent", "Mozilla/5.0 SataiCrawler");
+
+
+            return httpClient;
         }
     }
 }

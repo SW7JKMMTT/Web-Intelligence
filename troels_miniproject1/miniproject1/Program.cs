@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using miniproject1.DataStructures;
 using miniproject1.Indexer;
 using miniproject1.Persistence;
@@ -26,15 +27,7 @@ namespace miniproject1
             //websiteUrls.Add(@"https://www.instagram.com");
             //websiteUrls.Add(@"https://www.youtube.com");
 
-            var httpClientHandler = new HttpClientHandler()
-            {
-                AllowAutoRedirect = true,
-                MaxAutomaticRedirections = 100,
-                CookieContainer = new CookieContainer()
-            };
-
-            var httpClient = new HttpClient(httpClientHandler) { Timeout = new TimeSpan(0, 0, 5) };
-            httpClient.DefaultRequestHeaders.Add("user-agent", "Mozilla/5.0 SataiCrawler");
+            
 
             var seedUrl = new List<Uri>
             {
@@ -42,17 +35,17 @@ namespace miniproject1
                 new Uri("https://en.wikipedia.org"),
                 new Uri("https://news.ycombinator.com"),
                 new Uri("http://www.mmo-champion.com"),
-                new Uri("http://www.imdb.com")
+                new Uri("https://msdn.microsoft.com")
             };
 
-            var crawler = SerializationHelper.RestoreCrawler(seedUrl, new List<Host>(), httpClient, 4000);
+            var crawler = SerializationHelper.RestoreCrawler(seedUrl, new List<Host>(), 5000);
 
             Console.CancelKeyPress += delegate
             {
                 SerializationHelper.SaveCrawler(crawler);
             };
 
-            crawler.Run();
+            Task.Run(() => crawler.Run()).GetAwaiter().GetResult();
             SerializationHelper.SaveCrawler(crawler);
 
             var indexer = new Index();

@@ -13,7 +13,6 @@ namespace miniproject1.DataStructures
     [Serializable]
     public class Host : IComparable<Host>
     {
-        private static readonly ConcurrentDictionary<string, Host> Hosts = new ConcurrentDictionary<string, Host>();
 
         [NonSerialized]
         private volatile Mutex _hostMutex = new Mutex();
@@ -60,25 +59,25 @@ namespace miniproject1.DataStructures
             _hostMutex.ReleaseMutex();
         }
 
-        public static Host GetOrCreate(Uri url)
+        public static Host GetOrCreate(Uri url, ConcurrentDictionary<string, Host> hosts)
         {
             //var host = hosts.FirstOrDefault(x => x.Hosturl.Host == url.Host);
             //var host = hosts[url.Host];
             Host host;
-            if (!Hosts.TryGetValue(url.Host, out host))
+            if (!hosts.TryGetValue(url.Host, out host))
             {
                 var hosturi = new Uri(url.Scheme + "://" + url.Host);
                 host = new Host(hosturi);
-                Hosts[url.Host] = host;
-                host.Id = Hosts.Count;
+                hosts[url.Host] = host;
+                host.Id = hosts.Count;
             }
 
             return host;
         }
 
-        public static int Count()
+        public static int Count(ConcurrentDictionary<string, Host> hosts)
         {
-            return Hosts.Count;
+            return hosts.Count;
         }
 
         public int CompareTo(Host other)
@@ -99,14 +98,12 @@ namespace miniproject1.DataStructures
         public void ReleaseMutex()
         {
             _hostMutex.ReleaseMutex();
+            LastVisited = DateTime.Now;
         }
 
         public void CreateMutex()
         {
             _hostMutex = new Mutex();
         }
-
-
-
     }
 }

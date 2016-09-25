@@ -75,7 +75,9 @@ namespace miniproject1.Crawler
 
             if (candidate.FirstOrDefault().Value == null)
             {
-                return BackQueueMap.FirstOrDefault(x => x.Value.Count > 0).Value.Dequeue();
+                var d = BackQueueMap.FirstOrDefault(x => x.Value.Count > 0).Value.Dequeue();
+                DequeueMutex.ReleaseMutex();
+                return d;
             }
 
             var ret = candidate.FirstOrDefault().Value.Dequeue();

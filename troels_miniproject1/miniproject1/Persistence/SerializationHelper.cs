@@ -12,7 +12,7 @@ namespace miniproject1.Persistence
 {
     public static class SerializationHelper
     {
-        public static Crawler.Crawler RestoreCrawler(List<Uri> seedUris, List<Host> hosts, HttpClient httpClient, int limit)
+        public static Crawler.Crawler RestoreCrawler(List<Uri> seedUris, List<Host> hosts, int limit)
         {
             var crawlerSerialser = new DataContractSerializer(typeof(Crawler.Crawler), null, 1024 * 1024 * 1024, false, true, null);
 
@@ -29,9 +29,8 @@ namespace miniproject1.Persistence
                 {
                     Console.WriteLine(ex);
                     crawlerStream.Close();
-                    return new Crawler.Crawler(seedUris, hosts, httpClient, limit);
+                    return new Crawler.Crawler(seedUris, hosts, limit);
                 }
-                crawler.HttpClient = httpClient;
                 crawler.StartedWith = crawler.SitesVisited.Count;
                 crawler.Limit = limit;
                 crawler.BackQueue.DequeueMutex = new Mutex();
@@ -40,13 +39,13 @@ namespace miniproject1.Persistence
                 var now = DateTime.Now - TimeSpan.FromSeconds(1);
                 crawler.BackQueue.BackQueueMap.ForEach(x => x.Key.LastVisited = now);
                 crawler.BackQueue.BackQueueMap.ForEach(x => x.Key.CreateMutex());
-                Console.WriteLine("Restore crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, Host.Count(), crawler.BackQueue.GetBackQueueCount());
+                Console.WriteLine("Restore crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, crawler.Hosts.Count, crawler.BackQueue.GetBackQueueCount());
                 crawlerStream.Close();
                 return crawler;
             }
 
             crawlerStream.Close();
-            return new Crawler.Crawler(seedUris, hosts, httpClient, limit);
+            return new Crawler.Crawler(seedUris, hosts, limit);
         }
 
         public static void SaveCrawler(Crawler.Crawler crawler)
@@ -56,7 +55,7 @@ namespace miniproject1.Persistence
 
             crawlerSerialser.WriteObject(crawlerStream, crawler);
             crawlerStream.Close();
-            Console.WriteLine("Saved crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, Host.Count(), crawler.BackQueue.GetBackQueueCount());
+            Console.WriteLine("Saved crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, crawler.Hosts.Count, crawler.BackQueue.GetBackQueueCount());
         }
 
         public static Index RestoreIndex()
