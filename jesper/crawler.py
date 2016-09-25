@@ -156,7 +156,6 @@ class Host():
                 # print("Getting robots file {}".format(roburl.geturl()))
                 content, size = downloadPage(url, 524288, {"text/plain", "text/html"}, 2)
             except WrongTypeError as e:
-                # print(e.type)
                 return None
             except (PageTooLargeError, AbortError):
                 return None
@@ -470,7 +469,6 @@ def load_url(events, queue, url, host, timeout):
         events.downloading()
         content, size = downloadPage(url, MAX_PAGE_SIZE, {"text/html"}, timeout)
     except (requests.exceptions.ConnectionError, requests.exceptions.TooManyRedirects, requests.exceptions.ReadTimeout):
-        # print("Read timed out")
         return UnparsablePage(url)
     except PageTooLargeError as p:
         return LargePage(url, p.size)
@@ -530,25 +528,6 @@ def todisk_dict(obj, path):
         p = pathJoin(path, str(k))
         todisk(v, p)
 
-MyManager.register("bq", MainQueue)
-MyManager.register("up", queue.Queue)
-
-def Manager():
-    m = MyManager()
-    m.start()
-    return m
-
-# fq = FrontQueue()
-running = multiprocessing.Value("b", True)
-
-m = Manager()
-#updated = m.up()
-updated = Queue()
-sel = m.bq()
-events = event.EventQueue()
-
-sel.discover([Url(url) for url in SEEDURLS])
-
 def arun(eclient):
     try:
         eclient.starting()
@@ -578,30 +557,59 @@ def arun(eclient):
 def real_run(eclient):
     # print("Starting {}".format(i))
     try:
-        # cProfile.runctx('arun(eclient)', globals(), locals(), filename="runner" + str(i) + ".stats")
-        arun(eclient)
+        cProfile.runctx('arun(eclient)', globals(), locals(), filename="runner" + str(i) + ".stats")
+        # arun(eclient)
     except AbortError as e:
         eclient.exception()
         pass
 
-def writequeue():
-    os.makedirs("Back/hosts", exist_ok=True)
-    while updated.qsize() > 0 or running.value:
-        v = updated.get()
-        os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
-        todisk(save(v), "Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"))
+def writequeue(eclient):
+    try:
+        os.makedirs("Back/hosts", exist_ok=True)
+        while updated.qsize() > 0 or running.value:
+            try:
+                v = updated.get_nowait()
+                os.makedirs("Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"), exist_ok=True)
+                # todisk(save(v), "Back/hosts/{}/urls/{}".format(v.url.getHost(), v.url.getPath().strip("/") or "darude"))
+                eclient.processing(v.url.geturl())
+            except multiprocessing.queues.Empty:
+                pass #Idle
+        eclient.done()
+    except Exception as e:
+        eclient.exception()
+        with open("write_error.log", "a") as f:
+            traceback.print_exc(file=f)
 
+MyManager.register("bq", MainQueue)
+MyManager.register("up", queue.Queue)
+
+def Manager():
+    m = MyManager()
+    m.start()
+    return m
+
+running = multiprocessing.Value("b", True)
+
+m = Manager()
+updated = Queue()
+sel = m.bq()
+
+sel.discover([Url(url) for url in SEEDURLS])
+
+crawlerEvents = event.EventQueue()
+writerEvents = event.EventQueue()
 
 crawlerThreads = []
 writerThreads = []
-for i in range(20):
-    eclient = events.connect()
+for i in range(150):
+    eclient = event.CrawlerEventClient(crawlerEvents.connect())
     t = multiprocessing.Process(target=real_run, args=[eclient])
     t.start()
     crawlerThreads.append(t)
 
 for i in range(2):
-    t = multiprocessing.Process(target=writequeue)
+    eclient = event.WriterEventClient(writerEvents.connect())
+    t = multiprocessing.Process(target=writequeue, args=[eclient])
     t.start()
     writerThreads.append(t)
 
@@ -611,33 +619,6 @@ def exit_on_q(key):
     elif key in ("s", "S"):
         running.value = False
 
-class SpacedBarGraph(urwid.BarGraph):
-    def calculate_bar_widths(self, size, bardata):
-        """
-        Return a list of bar widths, one for each bar in data.
-
-        If self.bar_width is None this implementation will stretch
-        the bars across the available space specified by maxcol.
-        """
-        (maxcol, maxrow) = size
-
-        if self.bar_width is not None:
-            return [self.bar_width] * min(
-                len(bardata), maxcol / self.bar_width)
-
-        if len(bardata) >= maxcol:
-            return [1] * maxcol
-
-        widths = []
-        remain = len(bardata)
-        grow = maxcol # - (remain - 1)
-        for row in bardata:
-            w = int(float(grow) / remain + 0.5)
-            widths.append(w)
-            grow -= w
-            remain -= 1
-        return widths
-
 GOAL = 100
 BARCOLS = 25
 startTime = datetime.now()
@@ -645,22 +626,27 @@ lastGraphTime = datetime.now()
 lastGraphData = 0
 graphDataList = [[0] for i in range(BARCOLS)]
 processedPages = 0
-def crawlEvent():
+def crawlerCallback():
     global processedPages
     global lastGraphTime
     global lastGraphData
     global graphDataList
-    while events.hasEvents():
-        e = events.get()
-        if e.getEventType() == event.EventType.status:
+    while crawlerEvents.hasEvents():
+        e = crawlerEvents.get()
+        bottom_items[3].set_text("Pending Events: {}".format(crawlerEvents.size()))
+        if e.getEventType() == event.CrawlerEventType.status:
             crawlers[e.i].set_text(e.getText())
             if e.getText() == "Done": #TODO: Not string compar
                 crawler_wrap[e.i].set_attr_map({None: "crawlerdonebg"})
+            elif e.getText() == "Retrieving": #TODO: Not string compar
+                crawler_wrap[e.i].set_attr_map({None: "crawlerretrbg"})
             else:
                 crawler_wrap[e.i].set_attr_map({None: "crawlerbg"})
-        if e.getEventType() == event.EventType.processed:
+
+        if e.getEventType() == event.CrawlerEventType.processed:
             processedPages += 1
             bottom_items[0].set_text("Processed: {}".format(processedPages))
+            big_text.set_text(str(processedPages))
 
             diff = (datetime.now() - startTime).seconds
             if diff is not 0:
@@ -683,38 +669,59 @@ def crawlEvent():
                 lastGraphTime = datetime.now()
                 bar_chart.set_data(graphDataList, GOAL + 20, [GOAL])
 
-        if e.getEventType() == event.EventType.error:
+        if e.getEventType() == event.CrawlerEventType.error:
             crawlers[e.i].set_text("DEAD")
             crawler_wrap[e.i].set_attr_map({None: "crawlerdeadbg"})
 
+def writerCallback():
+    while writerEvents.hasEvents():
+        e = writerEvents.get()
+        if e.getEventType() == event.WriterEventType.status:
+            writers[e.i].set_text(e.getText()[:50])
+
+            if e.getText() == "Done": #TODO: Not string compar
+                writer_wrap[e.i].set_attr_map({None: "crawlerdonebg"})
+
+        if e.getEventType() == event.WriterEventType.error:
+            writers[e.i].set_text("DEAD")
+            writer_wrap[e.i].set_attr_map({None: "crawlerdeadbg"})
 
 try:
 
     palette = [
-        ('crawlerbg',     'black', 'light gray'),
-        ('crawlerdonebg', 'black', 'light blue'),
-        ('crawlerdeadbg', 'black', 'light red'),
-        ('crawlerAreabg', 'black', 'dark gray'),
-        ('statusbar',     'black', 'dark gray'),
-        ('graphbars',     'black', 'light gray'),
-        ('graphbg',       'black', 'black'),
-        ('bg',            'black', 'black'),]
+        ('crawlerbg',     'black',     'light gray'),
+        ('crawlerdonebg', 'black',     'dark green'),
+        ('crawlerretrbg', 'black',     'brown'),
+        ('crawlerdeadbg', 'black',     'dark red'),
+        ('crawlerAreabg', 'black',     'dark gray'),
+        ('statusbar',     'black',     'dark gray'),
+        ('graphbars',     'black',     'dark blue'),
+        ('line',          'light red', ''),
+        ('graphbg',       'black',     'black'),
+        ('bg',            'black',     'black'),]
+
+    big_text = urwid.BigText("Starting", urwid.font.Thin6x6Font())
+    big_text_wrap = urwid.BoxAdapter(urwid.Filler(urwid.AttrMap(urwid.Padding(big_text, "center", None), "crawlerbg"), "bottom", None, 7), 8)
 
     crawlers = [urwid.Text("Idle", align="center") for crawl in crawlerThreads]
     crawler_wrap = [urwid.AttrMap(urwid.Padding(crawl, width=20), "crawlerbg") for crawl in crawlers]
-    crawler_area = urwid.AttrMap(urwid.LineBox(urwid.Padding(urwid.GridFlow(crawler_wrap, 20, 3, 1, 'center'), left=4, right=3, min_width=15), title="Crawlers"), 'crawlerAreabg')
+    crawler_area = urwid.AttrMap(urwid.LineBox(urwid.Padding(urwid.GridFlow(crawler_wrap, 20, 3, 1, 'center'), left=4, right=4, min_width=50), title="Crawlers"), 'crawlerAreabg')
 
-    bar_chart = SpacedBarGraph(['graphbg', 'graphbars'], hatt=['graphbars', 'graphbars'])
+    writers = [urwid.Text("Idle", align="center") for writer in writerThreads]
+    writer_wrap = [urwid.AttrMap(urwid.Padding(writer, width=50), "crawlerbg") for writer in writers]
+    writer_area = urwid.AttrMap(urwid.LineBox(urwid.Padding(urwid.GridFlow(writer_wrap, 50, 3, 1, 'center'), left=4, right=4, min_width=50), title="Writers"), 'crawlerAreabg')
 
+    bar_chart = urwid.BarGraph(['graphbg', 'graphbars'], hatt=['line'])
     bar_chart_box = urwid.AttrMap(urwid.LineBox(urwid.BoxAdapter(bar_chart, 30), title="PERFORMANCE"), "statusbar")
 
-    bottom_items = [urwid.Text("Starting"), urwid.Text("Starting"), urwid.Text("Starting")]
-    bottom_col = urwid.AttrMap(urwid.Columns(bottom_items, 3), "statusbar")
+    bottom_items = [urwid.Text("Starting"), urwid.Text("Starting"), urwid.Text("Starting"), urwid.Text("Starting")]
+    bottom_col = urwid.AttrMap(urwid.Columns(bottom_items), "statusbar")
 
-    fill = urwid.Frame(urwid.Frame(urwid.Filler(crawler_area), footer=bar_chart_box), footer=bottom_col)
+    fill = urwid.Frame(urwid.ListBox([big_text_wrap, crawler_area, writer_area, bar_chart_box]), footer=bottom_col)
     map2 = urwid.AttrMap(fill, 'bg')
     loop = urwid.MainLoop(map2, palette, unhandled_input=exit_on_q)
-    loop.watch_file(events.getfd(), crawlEvent)
+    loop.watch_file(crawlerEvents.getfd(), crawlerCallback)
+    loop.watch_file(writerEvents.getfd(), writerCallback)
     loop.run()
     # time.sleep(timedelta(seconds=30).seconds)
 except KeyboardInterrupt:
