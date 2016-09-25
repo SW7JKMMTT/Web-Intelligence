@@ -90,7 +90,10 @@ def save_bytes(obj):
 
 class Url(object):
     def __init__(self, url):
-        self.url = urllib.parse.urlparse(url)
+        if type(url) == str:
+            self.url = urllib.parse.urlparse(url)
+        else:
+            self.url = url
 
     def str(self):
         return self.url

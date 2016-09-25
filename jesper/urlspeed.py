@@ -1,10 +1,10 @@
-from urllib.parse import urlparse, uses_relative, uses_netloc, uses_fragment, urlunparse
+from urllib.parse import urlparse, uses_relative, uses_netloc, uses_fragment, urlunparse, ParseResult
 
 def urljoin(base, url, allow_fragments=True):
     """Join a base URL and a possibly relative URL to form an absolute
     interpretation of the latter."""
     if not base:
-        return url
+        return urlparse(url)
     if not url:
         return base
 
@@ -13,11 +13,10 @@ def urljoin(base, url, allow_fragments=True):
             urlparse(url, bscheme, allow_fragments)
 
     if scheme != bscheme or scheme not in uses_relative:
-        return url
+        return urlparse(url)
     if scheme in uses_netloc:
         if netloc:
-            return urlunparse((scheme, netloc, path,
-                                              params, query, fragment))
+            return ParseResult(scheme, netloc, path, params, query, fragment)
         netloc = bnetloc
 
     if not path and not params:
@@ -25,8 +24,7 @@ def urljoin(base, url, allow_fragments=True):
         params = bparams
         if not query:
             query = bquery
-        return urlunparse((scheme, netloc, path,
-                                          params, query, fragment))
+        return ParseResult(scheme, netloc, path, params, query, fragment)
 
     base_parts = bpath.split('/')
     if base_parts[-1] != '':
@@ -63,5 +61,4 @@ def urljoin(base, url, allow_fragments=True):
         # then we need to append the trailing '/'
         resolved_path.append('')
 
-    return urlunparse((scheme, netloc, '/'.join(
-        resolved_path) or '/', params, query, fragment))
+    return ParseResult(scheme, netloc, '/'.join(resolved_path) or '/', params, query, fragment)
