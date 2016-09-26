@@ -7,32 +7,34 @@ import lxml
 from lxml.html.clean import Cleaner
 from nltk.corpus import stopwords
 from nltk.stem.wordnet import WordNetLemmatizer
+from nltk.stem.snowball import SnowballStemmer
 from collections import Counter
 from pprint import pprint
 
-not_word_chars = re.compile(r'[^\w]')
+not_word_chars = re.compile(r'\s+|[^\w]|\s+[^\w]*|[^A-Za-z]')
 lemma = WordNetLemmatizer()
-cleaner = Cleaner()
+stemmer = SnowballStemmer('english')
+cleaner = Cleaner(scripts=True, javascript=True, comments=True, style=True, embedded=True, forms=True, annoying_tags=True)
 inverted_index = dict()
 
 def extract_text(html, method='lxml'):
-	if method == 'lxml':
-		return lxml.html.document_fromstring(cleaner.clean_html(html)).text_content()
-	else:
-        soup = BeautifulSoup(content, 'html.parser')
-        for unwanted in soup(['script', 'style']):
-            unwanted.extract()
-		return soup.get_text(strip=True)
+        text = ''
+        if method == 'lxml':
+            text = lxml.html.fromstring(cleaner.clean_html(html)).text_content()
+        else:
+            soup = BeautifulSoup(content, 'html.parser')
+            for unwanted in soup(['script', 'style']):
+                unwanted.extract()
+            text = soup.get_text(strip=True)
+        return re.sub(not_word_chars, " ", text).lower()
 
 
 def tokenize_string(string):
-    string = re.sub(not_word_chars, ' ', string).lower()
     tokens = nltk.word_tokenize(string)
-    tokens = [lemma.lemmatize(token) for token in tokens if token not in stopwords.words('english')]
+    tokens = [stemmer.stem(token) for token in tokens if token not in stopwords.words('english')]
     return tokens
 
 def search(query):
-    print(query)
     findings = list()
     for word in tokenize_string(query):
         print(word)
@@ -41,6 +43,7 @@ def search(query):
             print('Found:', len(found), 'for', word)
         else:
             found = set()
+            print('Nothing found for', word)
         findings.append(found)
 
     for page in set.intersection(*findings):
@@ -50,8 +53,7 @@ def search(query):
 class Document(object):
     def __init__(self, path, content):
         self.path = path
-		clean_text = extract_text(content)
-		print(clean_text)
+        clean_text = extract_text(content)
         self.tokens = tokenize_string(clean_text)
         for token, cnt in Counter(self.tokens).items():
             if not token in inverted_index.keys():
@@ -59,17 +61,14 @@ class Document(object):
             inverted_index[token].append((self, cnt))
 
 @begin.start
-def main(dir: 'Directory tree of hosts' = None):
+def main(dir: 'Directory tree of hosts'):
     "Index stuff"
     print('Indexing...')
-    cnt = 0
     for content_file in glob.iglob(dir + '/**/content', recursive=True):
-        if cnt > 20:
-            break
         with open(content_file, "r") as f:
             content = bytes(f.read(), 'utf-8')
             Document(content_file, content.decode('unicode_escape'))
-        cnt += 1
+        print('Indexed', content_file)
 
     print('Done indexing!')
     while True:
