@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import concurrent.futures
 import traceback
 import urwid
 import threading
@@ -18,8 +17,6 @@ import queue
 import lxml.html
 import cProfile
 import event
-import heapq
-import pprint
 import magic
 from functools import singledispatch
 
