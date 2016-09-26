@@ -3,6 +3,8 @@ import begin
 import re
 from bs4 import BeautifulSoup
 import nltk
+import lxml
+from lxml.html.clean import Cleaner
 from nltk.corpus import stopwords
 from nltk.stem.wordnet import WordNetLemmatizer
 from collections import Counter
@@ -10,7 +12,18 @@ from pprint import pprint
 
 not_word_chars = re.compile(r'[^\w]')
 lemma = WordNetLemmatizer()
+cleaner = Cleaner()
 inverted_index = dict()
+
+def extract_text(html, method='lxml'):
+	if method == 'lxml':
+		return lxml.html.document_fromstring(cleaner.clean_html(html)).text_content()
+	else:
+        soup = BeautifulSoup(content, 'html.parser')
+        for unwanted in soup(['script', 'style']):
+            unwanted.extract()
+		return soup.get_text(strip=True)
+
 
 def tokenize_string(string):
     string = re.sub(not_word_chars, ' ', string).lower()
@@ -33,13 +46,13 @@ def search(query):
     for page in set.intersection(*findings):
         print(page.path)
 
+
 class Document(object):
     def __init__(self, path, content):
         self.path = path
-        soup = BeautifulSoup(content, 'html.parser')
-        for unwanted in soup(['script', 'style']):
-            unwanted.extract()
-        self.tokens = tokenize_string(soup.get_text(strip=True))
+		clean_text = extract_text(content)
+		print(clean_text)
+        self.tokens = tokenize_string(clean_text)
         for token, cnt in Counter(self.tokens).items():
             if not token in inverted_index.keys():
                 inverted_index[token] = list()
