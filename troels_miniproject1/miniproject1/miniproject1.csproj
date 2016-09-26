@@ -87,6 +87,8 @@
     <Compile Include="Indexer\Token.cs" />
     <Compile Include="Indexer\Tokenizor.cs" />
     <Compile Include="Indexer\TokenUrl.cs" />
+    <Compile Include="Searcher\BooleanSearcher.cs" />
+    <Compile Include="Searcher\TokenSearcher.cs" />
     <Compile Include="Shingles\ShingleHelper.cs" />
   </ItemGroup>
   <ItemGroup>

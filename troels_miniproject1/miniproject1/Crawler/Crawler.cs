@@ -191,7 +191,7 @@ namespace miniproject1.Crawler
                 }
             }
 
-            //Console.WriteLine("Visited {0} sites, {1} to-go, added {2} to queue, and {3} was not allowed. ({4} duplicates)\n", SitesVisited.Count, BackQueue.GetBackQueueCount(), allowed, notAllowed, duplicates);
+            //Console.WriteLine("Visited {0} sites, {1} to-go, added {2} to queue, And {3} was not allowed. ({4} duplicates)\n", SitesVisited.Count, BackQueue.GetBackQueueCount(), allowed, notAllowed, duplicates);
         }
 
         public async Task CrawlTask()
@@ -215,14 +215,14 @@ namespace miniproject1.Crawler
 
         public async void Run()
         {
-            int threads = 4;
-            Task.Run(() => PrintStatus());
+            int threads = 1;
+            var t = Task.Run(() => PrintStatus());
             while (BackQueue.GetBackQueueCount() > 0 && SitesVisited.Count < Limit)
             {
                 Console.WriteLine("Starting new tasks!");
-                Task.WhenAll(Enumerable.Range(SitesVisited.Count, SitesVisited.Count + Math.Min(threads, Hosts.Count)).Select(i => CrawlTask())).GetAwaiter().GetResult();
+                Task.WhenAll(Enumerable.Range(SitesVisited.Count, SitesVisited.Count + threads).Select(i => CrawlTask())).GetAwaiter().GetResult();
             }
-
+            t.Dispose();
         }
 
         public async void PrintStatus()

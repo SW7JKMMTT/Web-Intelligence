@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 
 namespace miniproject1.Indexer
 {
@@ -6,6 +7,8 @@ namespace miniproject1.Indexer
     public class TokenUrl : IComparable<TokenUrl>
     {
         public string Url;
+
+        public List<Token> Tokens = new List<Token>(); 
 
         public TokenUrl(Uri uri)
         {
