@@ -40,12 +40,9 @@ namespace miniproject1
                 new Uri("https://msdn.microsoft.com")
             };
 
-            var crawler = SerializationHelper.RestoreCrawler(seedUrl, new List<Host>(), 100);
+            var crawler = SerializationHelper.RestoreCrawler(seedUrl, new List<Host>(), 1000);
 
-            Console.CancelKeyPress += delegate
-            {
-                SerializationHelper.SaveCrawler(crawler);
-            };
+            
 
             if (crawler.Limit >= crawler.SitesVisited.Count)
             {
@@ -56,11 +53,11 @@ namespace miniproject1
             var indexer = new Index();
 
             var sw = Stopwatch.StartNew();
-            foreach (var site in crawler.SitesVisited.Values.Take(100))
+            foreach (var site in crawler.SitesVisited.Values)
             {
                 Tokenizor.AddTokensToTokenList(site, indexer.Tokens);
             }
-            Console.WriteLine("Indexing {0} documents took {1} ms", crawler.SitesVisited.Count, sw.ElapsedMilliseconds);
+            Console.WriteLine("Indexing {0} documents took {1} ms ({2} pr. sec)", crawler.SitesVisited.Count, sw.ElapsedMilliseconds, (double)crawler.SitesVisited.Count / (sw.ElapsedMilliseconds / 1000));
 
             //SerializationHelper.SaveIndex(indexer);
 
@@ -70,28 +67,40 @@ namespace miniproject1
             //TestTokenSearcher(indexer);
 
             string s;
-            Console.Write("Enter search Query: ");
-            while ((s = Console.ReadLine()) != "")
+
+            do
             {
-                if(s == null)
+                Console.Write("Enter search Query: ");
+                s = Console.ReadLine();
+                if (s == null)
                     continue;
 
-                TestTokenSearcher(indexer, s);
-                Console.Write("Enter search Query: ");
-            }
+                TestTokenSearcher(indexer, s, crawler.SitesVisited.Count);
+
+            } while (s != "");
+
+            //Console.Write("Enter search Query: ");
+            //while ((s = Console.ReadLine()) != "")
+            //{
+            //    if(s == null)
+            //        continue;
+
+            //    TestTokenSearcher(indexer, s);
+            //    Console.Write("Enter search Query: ");
+            //}
         }
 
-        public static void TestTokenSearcher(Index indexer, string searchstring)
+        public static void TestTokenSearcher(Index indexer, string searchstring, int documents)
         {
             var ts = new TokenSearcher(indexer);
 
-            var tokens = Tokenizor.StringToToken(searchstring, indexer.Tokens);
+            var tokens = Tokenizor.StringToToken(searchstring, indexer.Tokens).ToList();
 
-            var searchres = ts.OrderByScore(tokens, ts.And(tokens)).OrderByDescending(x => x.Item1);
+            var searchres = ts.OrderByScore(tokens, ts.And(tokens), documents).OrderByDescending(x => x.Item1);
 
             Console.WriteLine("Found {0} results for \"{1}\":", searchres.Count(), searchstring);
 
-            foreach (var t in searchres)
+            foreach (var t in searchres.Take(50))
             {
                 Console.WriteLine("{0,10:N7}: {1}", t.Item1, t.Item2.Url);
             }

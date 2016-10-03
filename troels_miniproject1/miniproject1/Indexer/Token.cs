@@ -81,7 +81,7 @@ namespace miniproject1.Indexer
 
         public int TermFrequency(TokenUrl tokenUrl)
         {
-            int res;
+            int res = 0;
             Uris.TryGetValue(tokenUrl, out res);
             return res;
         }
@@ -93,19 +93,42 @@ namespace miniproject1.Indexer
 
         public double Weight(TokenUrl tokenUrl, int n)
         {
-            return TermFrequency(tokenUrl) * InverseDocumentFrequency(n);
+            // The weight is 0 if the url doesn't have the token
+            if (!this.Uris.ContainsKey(tokenUrl))
+                return 0;
+
+            return LogTermFrequency(tokenUrl, 10) * InverseDocumentFrequency(n);
         }
 
         public double SqrtFactor(TokenUrl tokenUrl)
         {
             var sum = tokenUrl.Tokens.Sum(x => Math.Pow(x.LogTermFrequency(tokenUrl, 2), 2));
 
-            return Math.Sqrt(sum);
+            return sum;
         }
 
         public double NormalisedWeight(TokenUrl tokenUrl, int n)
         {
+            // The weight is 0 if the url doesn't have the token
+            if (!this.Uris.ContainsKey(tokenUrl))
+                return 0;
+
             return Weight(tokenUrl, n) / Math.Sqrt(SqrtFactor(tokenUrl));
+        }
+
+        public double Weight(int n)
+        {
+            return 1 * InverseDocumentFrequency(n);
+        }
+
+        public double SqrtFactor(int numTerms)
+        {
+            return Math.Pow(numTerms, 2) * numTerms;
+        }
+
+        public double NormalisedWeight(int numterms, int n)
+        {
+            return Weight(n) / Math.Sqrt(SqrtFactor(numterms));
         }
     }
 }

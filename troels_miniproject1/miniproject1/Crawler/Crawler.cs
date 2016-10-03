@@ -5,10 +5,13 @@ using System.Diagnostics;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using HtmlAgilityPack;
 using miniproject1.DataStructures;
+using miniproject1.Persistence;
+using Nito.AsyncEx;
 using NUglify.Helpers;
 
 namespace miniproject1.Crawler
@@ -27,6 +30,11 @@ namespace miniproject1.Crawler
         public int StartedWith = 0;
 
         public int QueueMaxSize = 10000;
+
+        public bool run = true;
+
+        [NonSerialized]
+        private List<Task> tasksRunning;
 
         public Crawler(IEnumerable<Uri> url, IEnumerable<Host> initialHosts, int limit)
         {
@@ -102,7 +110,8 @@ namespace miniproject1.Crawler
 
             var t2 = sw.ElapsedMilliseconds;
 
-            var site = new Site(uri, content, currentHost);
+            Site site = new Site(uri, content, currentHost);
+
             Console.WriteLine("Visited site: {0}; {1} ms", site.Url, (t2 - t1));
             SitesVisited.TryAdd(uri, site);
             currentHost.LastVisited = DateTime.Now;
@@ -112,7 +121,7 @@ namespace miniproject1.Crawler
 
         public async void AddNewUrlsToQueue(Site site)
         {
-            if(SitesVisited.Count + QueueMaxSize < BackQueue.GetBackQueueCount())
+            if (SitesVisited.Count + QueueMaxSize < BackQueue.GetBackQueueCount())
                 return;
 
             var uri = site.Url;
@@ -181,6 +190,7 @@ namespace miniproject1.Crawler
                     }
                     else
                     {
+                        site.PointsTo.Add(candidateUri);
                         duplicates += BackQueue.AddToQueue(chost, candidateUri) ? 0 : 1;
                         allowed++;
                     }
@@ -215,23 +225,45 @@ namespace miniproject1.Crawler
 
         public async void Run()
         {
-            int threads = 1;
-            var t = Task.Run(() => PrintStatus());
-            while (BackQueue.GetBackQueueCount() > 0 && SitesVisited.Count < Limit)
+            Console.CancelKeyPress += delegate
             {
-                Console.WriteLine("Starting new tasks!");
-                Task.WhenAll(Enumerable.Range(SitesVisited.Count, SitesVisited.Count + threads).Select(i => CrawlTask())).GetAwaiter().GetResult();
+                run = false;
+                Console.WriteLine("Cancel cought, waiting for tasks to finish.");
+                Task.WhenAll(tasksRunning).GetAwaiter().GetResult();
+                Console.WriteLine("Tasks finished, saving crawler state.");
+                SerializationHelper.SaveCrawler(this);
+            };
+
+            int threads = 8;
+            run = true;
+            tasksRunning = new List<Task>();
+            var t = Task.Run(() => PrintStatus());
+            while (BackQueue.GetBackQueueCount() > 0 && SitesVisited.Count < Limit && run)
+            {
+
+                Console.WriteLine("Starting new task!");
+                tasksRunning.AddRange(Enumerable.Range(tasksRunning.Count(x => !x.IsCompleted), threads).Select(i => CrawlTask()));
+                try
+                {
+                    Task.WhenAll(tasksRunning).GetAwaiter().GetResult();
+
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex);    
+                }
             }
-            t.Dispose();
+
+            run = false;
         }
 
         public async void PrintStatus()
         {
             var sw = Stopwatch.StartNew();
-            while (true)
+            while (run)
             {
                 Console.WriteLine("{0} sites / {1} seconds = {2} sites pr. second", SitesVisited.Count - StartedWith,
-                sw.Elapsed.TotalSeconds, (SitesVisited.Count - StartedWith)/sw.Elapsed.TotalSeconds);
+                sw.Elapsed.TotalSeconds, (SitesVisited.Count - StartedWith) / sw.Elapsed.TotalSeconds);
                 Thread.Sleep(1000);
             }
         }

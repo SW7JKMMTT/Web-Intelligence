@@ -9,6 +9,7 @@ namespace miniproject1.Indexer
         public Index()
         {
             Tokens = new Dictionary<string, Token>();
+
         }
     }
 }

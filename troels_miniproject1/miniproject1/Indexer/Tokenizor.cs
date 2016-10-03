@@ -25,7 +25,7 @@ namespace miniproject1.Indexer
         {
             var html = Uglify.HtmlToText(site.Content).ToString();
 
-            var content = StringToTokenString(html).OrderBy(x => x);
+            var content = StringToTokenString(html);
 
             foreach (var c in content.GroupBy(x => x))
             {

@@ -19,6 +19,8 @@ namespace miniproject1.DataStructures
 
         public TokenUrl TokenUrl;
 
+        public List<Uri> PointsTo = new List<Uri>();
+
         public Site(Uri url, string content, Host host)
         {
             Url = url;
@@ -28,10 +30,10 @@ namespace miniproject1.DataStructures
             Host = host;
             TokenUrl = new TokenUrl(url);
         }
-
+        
         public int CompareTo(Uri other)
         {
-            return String.Compare(Url.AbsoluteUri, other.AbsoluteUri, StringComparison.Ordinal);
+            return string.Compare(Url.AbsoluteUri, other.AbsoluteUri, StringComparison.Ordinal);
         }
     }
 }

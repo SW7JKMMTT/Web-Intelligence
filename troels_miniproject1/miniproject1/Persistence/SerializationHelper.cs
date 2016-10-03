@@ -31,6 +31,7 @@ namespace miniproject1.Persistence
                     crawlerStream.Close();
                     return new Crawler.Crawler(seedUris, hosts, limit);
                 }
+                crawlerStream.Close();
                 crawler.StartedWith = crawler.SitesVisited.Count;
                 crawler.Limit = limit;
                 crawler.BackQueue.DequeueMutex = new Mutex();
@@ -40,7 +41,7 @@ namespace miniproject1.Persistence
                 crawler.BackQueue.BackQueueMap.ForEach(x => x.Key.LastVisited = now);
                 crawler.BackQueue.BackQueueMap.ForEach(x => x.Key.CreateMutex());
                 Console.WriteLine("Restore crawler state: {0} sites, {1} hosts, {2} URLs in back-queue", crawler.SitesVisited.Count, crawler.Hosts.Count, crawler.BackQueue.GetBackQueueCount());
-                crawlerStream.Close();
+                
                 return crawler;
             }
 

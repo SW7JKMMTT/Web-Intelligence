@@ -28,18 +28,20 @@ namespace miniproject1.Searcher
 
             var res = new List<TokenUrl>(list.FirstOrDefault().Uris.Keys);
                
-            res = list.Skip(1).Aggregate(res, (current, token) => current.Intersect(token.Uris.Keys).ToList());
+            res = list.Skip(1).Aggregate(res, (current, token) => current.Union(token.Uris.Keys).ToList());
 
             return res;
         }
 
-        public List<Tuple<double, TokenUrl>> OrderByScore(IEnumerable<Token> tokens, IEnumerable<TokenUrl> tokenUrls)
+        public List<Tuple<double, TokenUrl>> OrderByScore(IList<Token> tokens, IEnumerable<TokenUrl> tokenUrls, int documents)
         {
             var res = new List<Tuple<double, TokenUrl>>();
 
+            var tokenCount = tokens.Count();
+
             foreach (var tokenUrl in tokenUrls)
             {
-                var score = tokens.Sum(x => x.NormalisedWeight(tokenUrl, 2));
+                var score = tokens.Sum(x => x.NormalisedWeight(tokenUrl, documents) * x.NormalisedWeight(tokenCount, documents));
                 res.Add(new Tuple<double, TokenUrl>(score, tokenUrl));
             }
 
