@@ -61,9 +61,11 @@ def pred(a, p, k=20, threshold=0.666):
 def compute_row(irat):
     i, rating = irat
     print(i)
-    return (i, [rating.user_id.astype('float'), rating.item_id.astype('float'), pred(rating.user_id.astype('float'), rating.item_id.astype('float'), k=7)])
 
-def test():
+def rmse(predictions, targets):
+    return np.sqrt(((predictions - targets) ** 2).mean())
+
+def test(maximum_results=20000, k=20):
     actual_ratings = read_data('ml-100k/u1.test')
     our_predictions = np.empty((len(actual_ratings), 3))
     with Pool(10) as p:
@@ -72,8 +74,7 @@ def test():
             if i % 5 == 0:
                 print(i, "/", len(actual_ratings))
                 sys.stdout.flush()
-            if i == 1000:
-                break
+    print(rmse(our_predictions[:,2][:maximum_results], actual_ratings.rating.astype('float')[:maximum_results]))
 
 @begin.start
 def main(input_file:"Input rating file"='ml-100k/u1.base'):
