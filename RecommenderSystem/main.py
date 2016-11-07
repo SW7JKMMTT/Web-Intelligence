@@ -47,7 +47,7 @@ def pred(a, p, ratings, k=20, threshold=0.666):
 	contribution_from_each = [contribution_score(*k, p, ratings) / sum_sim for k in k_top]
 	#pprint(contribution_from_each)
 	res = a_avg_rating + np.sum(contribution_from_each)
-	print(res)
+	#print(res)
 	return res
 
 def test(ratings):
@@ -55,9 +55,8 @@ def test(ratings):
 	our_predictions = np.empty((len(actual_ratings), 3))
 	for i, rating in actual_ratings.iterrows():
 		our_predictions[i] = [rating.user_id.astype('float'), rating.item_id.astype('float'), pred(rating.user_id.astype('float'), rating.item_id.astype('float'), ratings, k=7)]
-		print('Pred: ', our_predictions[i][2], 'Actual: ', rating.rating.astype('float'))
-		if i > 6:
-			break
+		if i % 10 == 0:
+			print(i, "/", len(actual_ratings))
 
 @begin.start
 def main(input_file:"Input rating file"='ml-100k/u1.base'):
