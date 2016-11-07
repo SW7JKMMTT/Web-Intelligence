@@ -4,6 +4,7 @@ import scipy.stats as sp
 import math
 import begin
 import sys
+from functools import lru_cache
 from pprint import pprint
 from multiprocessing import Pool
 
@@ -19,6 +20,7 @@ def read_data(rating_file):
 
     return ratings_data
 
+@lru_cache(maxsize=None)
 def pearson(u1, u2):
     if u1 > u2:
         return pearson(u2, u1)
@@ -28,6 +30,7 @@ def pearson(u1, u2):
     # TODO: Adjust for inaccuracy
     return np.max(sp.pearsonr(res.rating_x, res.rating_y))
 
+@lru_cache(maxsize=None)
 def user_avg_rating(u1):
     return np.mean(ratings.loc[ratings['user_id'] == u1].rating)
 
@@ -55,15 +58,16 @@ def pred(a, p, k=20, threshold=0.666):
     #print(res)
     return res
 
-def compute_row(i, rating):
-    print(i, rating)
+def compute_row(irat):
+    i, rating = irat
+    print(i)
     return (i, [rating.user_id.astype('float'), rating.item_id.astype('float'), pred(rating.user_id.astype('float'), rating.item_id.astype('float'), k=7)])
 
 def test():
     actual_ratings = read_data('ml-100k/u1.test')
     our_predictions = np.empty((len(actual_ratings), 3))
     with Pool(10) as p:
-        for i, row in p.map(compute_row, list(actual_ratings.iterrows())):
+        for i, row in p.map(compute_row, actual_ratings.iterrows()):
             our_predictions[i] = row
             if i % 5 == 0:
                 print(i, "/", len(actual_ratings))
