@@ -7,6 +7,7 @@ import sys
 from functools import lru_cache
 from pprint import pprint
 from multiprocessing import Pool
+import time
 
 ratings = None
 
@@ -58,31 +59,33 @@ def pred(a, p, k=20, threshold=0.666):
     #print(res)
     return res
 
-def compute_row(irat):
+def compute_row(stuff):
+    irat, k, thresh = stuff
     i, rating = irat
-    print(i)
+    return (i, [rating.user_id.astype('float'), rating.item_id.astype('float'), pred(rating.user_id.astype('float'), rating.item_id.astype('float'), k=k, threshold=thresh)])
 
 def rmse(predictions, targets):
     return np.sqrt(((predictions - targets) ** 2).mean())
 
-def test(maximum_results=20000, k=20):
+def test(k=20, threshold=.5):
     actual_ratings = read_data('ml-100k/u1.test')
     our_predictions = np.empty((len(actual_ratings), 3))
+    num = 0
     with Pool(10) as p:
-        for i, row in p.map(compute_row, actual_ratings.iterrows()):
+        for i, row in p.map(compute_row, ((i, k, threshold) for i in actual_ratings.iterrows())):
             our_predictions[i] = row
+            num += 1
             if i % 5 == 0:
                 print(i, "/", len(actual_ratings))
                 sys.stdout.flush()
-    print(rmse(our_predictions[:,2][:maximum_results], actual_ratings.rating.astype('float')[:maximum_results]))
+    print(our_predictions[:,2], actual_ratings.rating.astype('float')[:len(our_predictions)])
+    print(rmse(our_predictions[:,2][:num], actual_ratings.rating.astype('float')[:num]))
 
 @begin.start
-def main(input_file:"Input rating file"='ml-100k/u1.base'):
+def main(k:"FRIENDS"=20, threshold:"STUFF"=0.5, input_file:"Input rating file"='ml-100k/u1.base'):
+    start_time = time.time()
     global ratings 
     ratings = read_data(input_file)
     #print(pred(1, 10))
-    test()
-    print(pearson.cache_info())
-    print(user_avg_rating.cache_info())
-
-
+    test(int(k), float(threshold))
+    print("Time:\t", time.time() - start_time)
