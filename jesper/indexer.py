@@ -77,29 +77,33 @@ def tokenize_string(string):
     return tokens
 
 
-def search(query, terms):
-    query = clean_text(query)
-    query_tokens = tokenize_string(query)
-    query_doc = Document('query', query_tokens, Counter(query_tokens))
-    findings = list()
-    for word in query_tokens:
-        print(word)
-        if word in terms.keys():
-            found = set([doc for doc, _ in terms[word].posting_list.values()])
-            print('Found:', len(found), 'for', word)
-        else:
-            found = set()
-            print('Nothing found for', word)
-        findings.append(found)
-    if findings:
-        results = set.intersection(*findings)
+def search(or_queries, terms):
+    results = list()
+    or_queries = [clean_text(query) for query in or_queries]
+    queries_tokens = [tokenize_string(query) for query in or_queries]
+    for query_tokens in queries_tokens:
+        findings = list()
+        for word in query_tokens:
+            print(word)
+            if word in terms.keys():
+                found = set([doc for doc, _ in terms[word].posting_list.values()])
+                print('Found:', len(found), 'for', word)
+            else:
+                found = set()
+                print('Nothing found for', word)
+            findings.append(found)
+        if findings:
+            results += list(set.intersection(*findings))
+    if results:
         scored = list()
+        all_query_tokens = [token for query_tokens in queries_tokens for token in query_tokens]
+        query_doc = Document('query', all_query_tokens , Counter(all_query_tokens))
         q_norm_w = dict()
         for t in terms.values():
-            if t.text in query_tokens:
+            if t.text in all_query_tokens:
                 q_norm_w[t.text] = t.norm_w(query_doc = query_doc, num_docs = num_docs)
         for doc in results:
-            score = sum([q_norm_w[t.text] * t.norm_w(doc = doc, num_docs = num_docs) for t in terms.values() if t.text in query_tokens])
+            score = sum([q_norm_w[t.text] * t.norm_w(doc = doc, num_docs = num_docs) for t in terms.values() if t.text in all_query_tokens])
             scored.append((score, doc.path))
         scored_view = sorted(scored, reverse=True)
         for s, p in scored_view:
@@ -138,12 +142,12 @@ def main(dir: 'Directory tree of hosts' = './Back', max: 'Max pages to index' = 
         tmp_files = glob.glob(dir + '/**/content', recursive=True)
         if max > 0:
             tmp_files = tmp_files[:int(max)]
+        num_docs = len(tmp_files)
         print('Files to index', num_docs)
         with ProcessPoolExecutor(max_workers=8) as executor:
             futures = { executor.submit(index_document, path) for path in tmp_files }
             for i, done in enumerate(as_completed(futures)):
                 res = done.result()
-                pprint(res)
                 if not res:
                     continue
                 for token_text, cnt in res.counter.items():
@@ -162,7 +166,7 @@ def main(dir: 'Directory tree of hosts' = './Back', max: 'Max pages to index' = 
     while True:
         query = input('Enter search query: ')
         if len(query):
-            search(query, terms)
+            search(query.split("OR"), terms)
         else:
             break
 
